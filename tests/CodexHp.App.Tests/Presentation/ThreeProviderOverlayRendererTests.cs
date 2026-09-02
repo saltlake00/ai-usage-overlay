@@ -25,7 +25,7 @@ public sealed class ThreeProviderOverlayRendererTests
                         WeeklyTokens: 7_864_494),
                 ],
             },
-            AppSettings.Default,
+            Settings(),
             false);
 
         var texts = layout.Commands
@@ -76,29 +76,33 @@ public sealed class ThreeProviderOverlayRendererTests
     }
 
     [Fact]
-    public void CreateLayout_renders_C_A_O_rows_with_short_and_weekly_remaining_percent()
+    public void CreateLayout_renders_one_column_per_provider_with_short_and_weekly_values()
     {
         var state = BaseState() with
         {
             ProviderRows =
             [
-                new ProviderUsageRowState("codex", "C", 72, 48, false),
-                new ProviderUsageRowState("claude", "A", 51, 83, false),
-                new ProviderUsageRowState("ollama", "O", 64, 91, false),
+                new ProviderUsageRowState("codex", "CODEX", 72, 48, false),
+                new ProviderUsageRowState("claude", "CLAUDE", 51, 83, false),
+                new ProviderUsageRowState("ollama", "OLLAMA", 64, 91, false, ShortWindowLabel: "SHORT"),
             ],
         };
 
         var commands = UsageOverlayRenderer.CreateLayout(state, Settings(), false).Commands;
 
-        Assert.Equal(["C", "A", "O"], commands
+        Assert.Equal(["CODEX", "CLAUDE", "OLLAMA"], commands
             .Where(command => command.Role == OverlayElementRole.ProviderLabel)
             .Select(command => command.Text));
-        Assert.Equal(["5h 72%", "5h 51%", "단기 64%"], commands
+        Assert.Equal(["72%", "51%", "64%"], commands
             .Where(command => command.Role == OverlayElementRole.ProviderShortText)
             .Select(command => command.Text));
-        Assert.Equal(["주간 48%", "주간 83%", "주간 91%"], commands
-            .Where(command => command.Role == OverlayElementRole.ProviderWeeklyText)
-            .Select(command => command.Text));
+
+        // Columns sit side by side, so each provider starts to the right of the last.
+        var lefts = commands
+            .Where(command => command.Role == OverlayElementRole.ProviderLabel)
+            .Select(command => command.Bounds.Left)
+            .ToArray();
+        Assert.True(lefts[0] < lefts[1] && lefts[1] < lefts[2]);
     }
 
     [Fact]

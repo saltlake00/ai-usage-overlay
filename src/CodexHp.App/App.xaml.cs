@@ -43,8 +43,8 @@ public partial class App : System.Windows.Application
     private int shutdownStarted;
     private IReadOnlyList<ProviderUsageRowState> secondaryProviderRows =
     [
-        new ProviderUsageRowState("claude", "A", null, null, true),
-        new ProviderUsageRowState("ollama", "O", null, null, true),
+        new ProviderUsageRowState("claude", "CLAUDE", null, null, true),
+        new ProviderUsageRowState("ollama", "OLLAMA", null, null, true, ShortWindowLabel: "SHORT"),
     ];
     private readonly SemaphoreSlim claudeRefreshSignal = new(0, 1);
     private readonly SemaphoreSlim ollamaRefreshSignal = new(0, 1);
@@ -298,10 +298,11 @@ public partial class App : System.Windows.Application
         return snapshot is null
             ? new ProviderUsageRowState(
                 state.Id,
-                state.Id.Equals("claude", StringComparison.OrdinalIgnoreCase) ? "A" : "O",
+                DisplayName(state.Id),
                 null,
                 null,
-                true)
+                true,
+                ShortWindowLabel: ShortWindowLabelFor(state.Id))
             : ToProviderRow(snapshot, state.Availability != ProviderAvailability.Current);
     }
 
@@ -349,13 +350,21 @@ public partial class App : System.Windows.Application
         var countsOnly = snapshot.ShortTokens is not null || snapshot.WeeklyTokens is not null;
         return new ProviderUsageRowState(
             snapshot.Id,
-            snapshot.Id.Equals("claude", StringComparison.OrdinalIgnoreCase) ? "A" : "O",
+            DisplayName(snapshot.Id),
             countsOnly ? null : (int)Math.Round(snapshot.ShortWindow.RemainingPercent),
             countsOnly ? null : (int)Math.Round(snapshot.WeeklyWindow.RemainingPercent),
             isStale,
             snapshot.ShortTokens,
-            snapshot.WeeklyTokens);
+            snapshot.WeeklyTokens,
+            ShortWindowLabelFor(snapshot.Id));
     }
+
+    private static string DisplayName(string providerId) => providerId.ToUpperInvariant();
+
+    // Ollama Cloud's short window is not a five-hour quota, so the row carries its
+    // own label instead of the renderer testing the provider id.
+    private static string ShortWindowLabelFor(string providerId) =>
+        providerId.Equals("ollama", StringComparison.OrdinalIgnoreCase) ? "SHORT" : "5H";
 
     private void ApplyCurrentProviderRows()
     {
@@ -375,7 +384,7 @@ public partial class App : System.Windows.Application
     [
         new ProviderUsageRowState(
             "codex",
-            "C",
+            "CODEX",
             state.ManaBar.RemainingPercent,
             state.HpBar.RemainingPercent,
             state.ManaBar.IsStale || state.HpBar.IsStale),

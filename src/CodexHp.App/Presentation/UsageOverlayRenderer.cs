@@ -90,6 +90,13 @@ public static class UsageOverlayRenderer
     private static readonly ColorValue HealthyColor = ColorValue.Parse("#55C878");
     private static readonly ColorValue WarningColor = ColorValue.Parse("#E4B84A");
     private static readonly ColorValue CriticalColor = ColorValue.Parse("#E45B5B");
+    private static readonly ColorValue MutedTextColor = ColorValue.Parse("#9AA0AE");
+    private static readonly IReadOnlyList<ColorValue> ProviderAccents =
+    [
+        ColorValue.Parse("#7C9CFF"),
+        ColorValue.Parse("#D8935C"),
+        ColorValue.Parse("#67C2A6"),
+    ];
 
     public static UsageOverlayLayout CreateLayout(
         UsageOverlayState state,
@@ -118,7 +125,7 @@ public static class UsageOverlayRenderer
 
         if (state.ProviderRows.Count > 0)
         {
-            AddProviderRows(commands, state.ProviderRows, width, height);
+            AddProviderColumns(commands, state.ProviderRows, width, height);
             if (isOverlayPositionChangeMode)
             {
                 AddOverlayPositionOutline(commands, width, height);
@@ -201,111 +208,111 @@ public static class UsageOverlayRenderer
         return new UsageOverlayLayout(width, height, commands);
     }
 
-    private static void AddProviderRows(
+    // One column per provider instead of one stacked row each. Three stacked rows
+    // left an 8px row and a 7px font at the default size; side-by-side columns give
+    // the number the full height of the overlay, which is what the row is read for.
+    private static void AddProviderColumns(
         ICollection<OverlayDrawCommand> commands,
         IReadOnlyList<ProviderUsageRowState> rows,
         int width,
         int height)
     {
-        const int margin = 3;
-        const int rowGap = 1;
-        const int labelWidth = 20;
-        var rowCount = Math.Max(1, rows.Count);
-        var rowHeight = Math.Max(3, (height - (margin * 2) - ((rowCount - 1) * rowGap)) / rowCount);
-        var gaugeLeft = margin + labelWidth;
-        var available = Math.Max(20, width - gaugeLeft - margin);
-        var shortWidth = available / 2;
-        var weeklyLeft = gaugeLeft + shortWidth + 2;
-        var weeklyWidth = Math.Max(1, width - weeklyLeft - margin);
-        var shortGaugeWidth = Math.Max(1, shortWidth - 2);
-        var fontSize = Math.Clamp(rowHeight - 1, 7, 13);
+        const int margin = 4;
+        const int gap = 4;
+        var count = Math.Max(1, rows.Count);
+        var available = Math.Max(24, width - (margin * 2) - (gap * (count - 1)));
+        var columnWidth = Math.Max(18, available / count);
+        var usable = Math.Max(12, height - (margin * 2));
+
+        // The overlay can be as short as the taskbar allows, so the lines are
+        // budgeted out of the height that exists rather than sized independently
+        // and allowed to spill past the bitmap.
+        var showName = usable >= 22;
+        var showWeekly = usable >= 40;
+        var barHeight = usable >= 52 ? 2 : 0;
+        var nameHeight = showName ? Math.Max(9, usable * 22 / 100) : 0;
+        var weeklyHeight = showWeekly ? Math.Max(9, usable * 20 / 100) : 0;
+        var valueHeight = Math.Max(9, usable - nameHeight - weeklyHeight - barHeight);
+        var nameFont = Math.Clamp(nameHeight - 2, 7, 13);
+        var valueFont = Math.Clamp(valueHeight - 3, 10, 26);
+        var weeklyFont = Math.Clamp(weeklyHeight - 2, 6, 12);
 
         for (var index = 0; index < rows.Count; index++)
         {
             var row = rows[index];
-            var top = margin + (index * (rowHeight + rowGap));
-            var labelBounds = new LayoutRect(margin, top, labelWidth - 2, rowHeight);
-            var shortBounds = new LayoutRect(gaugeLeft, top + 1, shortGaugeWidth, rowHeight - 2);
-            var weeklyBounds = new LayoutRect(weeklyLeft, top + 1, weeklyWidth, rowHeight - 2);
+            var left = margin + (index * (columnWidth + gap));
             var opacity = row.IsStale ? StaleOpacity : 1;
-            AddProviderGauge(
-                commands,
-                row.ShortRemainingPercent,
-                row.ShortTokens,
-                shortBounds,
-                row.Id.Equals("ollama", StringComparison.OrdinalIgnoreCase) ? "단기" : "5h",
-                OverlayElementRole.ProviderShortTrack,
-                OverlayElementRole.ProviderShortFill,
+            var accent = ProviderAccents[index % ProviderAccents.Count];
+            var top = margin;
+
+            if (showName)
+            {
+                commands.Add(new OverlayDrawCommand(
+                    OverlayDrawKind.Text,
+                    OverlayElementRole.ProviderLabel,
+                    new LayoutRect(left, top, columnWidth, nameHeight),
+                    accent,
+                    opacity,
+                    row.ShortLabel,
+                    nameFont));
+                top += nameHeight;
+            }
+
+            var shortText = FormatMeasure(row.ShortRemainingPercent, row.ShortTokens);
+            commands.Add(new OverlayDrawCommand(
+                OverlayDrawKind.Text,
                 OverlayElementRole.ProviderShortText,
+                new LayoutRect(left, top, columnWidth, valueHeight),
+                row.ShortRemainingPercent is { } percent ? RiskColor(percent) : White,
                 opacity,
-                fontSize);
-            AddProviderGauge(
-                commands,
-                row.WeeklyRemainingPercent,
-                row.WeeklyTokens,
-                weeklyBounds,
-                "주간",
-                OverlayElementRole.ProviderWeeklyTrack,
-                OverlayElementRole.ProviderWeeklyFill,
-                OverlayElementRole.ProviderWeeklyText,
-                opacity,
-                fontSize);
-            commands.Add(new OverlayDrawCommand(
-                OverlayDrawKind.Text,
-                OverlayElementRole.ProviderLabel,
-                labelBounds,
-                White,
-                opacity,
-                row.ShortLabel,
-                fontSize + 1));
+                shortText,
+                valueFont));
+            top += valueHeight;
+
+            // The bar only appears when a quota exists to fill it; a token count has
+            // no denominator and a full-width track would imply one.
+            if (barHeight > 0)
+            {
+                var barBounds = new LayoutRect(left, top, columnWidth, barHeight);
+                commands.Add(Rectangle(OverlayElementRole.ProviderShortTrack, barBounds, GaugeTrackColor, opacity));
+                if (row.ShortRemainingPercent is { } remaining)
+                {
+                    commands.Add(Rectangle(
+                        OverlayElementRole.ProviderShortFill,
+                        barBounds with { Width = Math.Max(1, columnWidth * Math.Clamp(remaining, 0, 100) / 100) },
+                        RiskColor(remaining),
+                        opacity));
+                }
+
+                top += barHeight;
+            }
+
+            if (showWeekly)
+            {
+                commands.Add(new OverlayDrawCommand(
+                    OverlayDrawKind.Text,
+                    OverlayElementRole.ProviderWeeklyText,
+                    new LayoutRect(left, top, columnWidth, weeklyHeight),
+                    MutedTextColor,
+                    opacity,
+                    $"{row.WeeklyWindowLabel} {FormatMeasure(row.WeeklyRemainingPercent, row.WeeklyTokens)}",
+                    weeklyFont));
+            }
         }
     }
 
-    private static void AddProviderGauge(
-        ICollection<OverlayDrawCommand> commands,
-        int? remainingPercent,
-        long? tokens,
-        LayoutRect bounds,
-        string prefix,
-        OverlayElementRole trackRole,
-        OverlayElementRole fillRole,
-        OverlayElementRole textRole,
-        double opacity,
-        int fontSize)
+    private static ColorValue RiskColor(int remainingPercent) => remainingPercent <= 15
+        ? CriticalColor
+        : remainingPercent <= 30
+            ? WarningColor
+            : HealthyColor;
+
+    private static string FormatMeasure(int? remainingPercent, long? tokens) => remainingPercent switch
     {
-        commands.Add(Rectangle(trackRole, bounds, GaugeTrackColor, opacity));
-
-        // A token count has no quota to fill a bar against, so the row shows the
-        // number on the bare track instead of a gauge that would imply a limit.
-        if (remainingPercent is null && tokens is { } count)
-        {
-            commands.Add(new OverlayDrawCommand(
-                OverlayDrawKind.Text,
-                textRole,
-                bounds,
-                White,
-                opacity,
-                $"{prefix} {FormatTokens(count)}",
-                fontSize));
-            return;
-        }
-
-        var normalized = Math.Clamp(remainingPercent ?? 0, 0, 100);
-        var color = normalized <= 15
-            ? CriticalColor
-            : normalized <= 30
-                ? WarningColor
-                : HealthyColor;
-        commands.Add(Rectangle(fillRole, bounds with { Width = bounds.Width * normalized / 100 }, color, opacity));
-        commands.Add(new OverlayDrawCommand(
-            OverlayDrawKind.Text,
-            textRole,
-            bounds,
-            White,
-            opacity,
-            $"{prefix} {(remainingPercent is { } value ? $"{Math.Clamp(value, 0, 100)}%" : "--%")}",
-            fontSize));
-    }
+        { } percent => $"{Math.Clamp(percent, 0, 100)}%",
+        null when tokens is { } count => FormatTokens(count),
+        _ => "--",
+    };
 
     // The overlay row is a few characters wide, so counts are abbreviated rather
     // than truncated by the text renderer.

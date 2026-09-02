@@ -25,4 +25,6 @@ public sealed record ProviderUsageRowState(
     int? WeeklyRemainingPercent,
     bool IsStale,
     long? ShortTokens = null,
-    long? WeeklyTokens = null);
+    long? WeeklyTokens = null,
+    string ShortWindowLabel = "5H",
+    string WeeklyWindowLabel = "7D");
