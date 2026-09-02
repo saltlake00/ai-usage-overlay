@@ -1,4 +1,4 @@
-<Window x:Class="CodexHp.App.Presentation.Settings.SettingsWindow"
+﻿<Window x:Class="CodexHp.App.Presentation.Settings.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="AI Usage Overlay Settings"
@@ -382,11 +382,7 @@
                                    Margin="0,4,0,0"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                    Text="{Binding ApplicationCommitText}" />
-                        <TextBlock x:Name="AboutDeveloperEmailText"
-                                   Margin="0,12,0,0"
-                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                   Text="Developer: netics01@gmail.com" />
-                        <StackPanel Margin="0,4,0,0"
+                        <StackPanel Margin="0,12,0,0"
                                     HorizontalAlignment="Center"
                                     Orientation="Horizontal">
                             <TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}"

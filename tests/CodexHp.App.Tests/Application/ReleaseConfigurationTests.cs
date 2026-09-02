@@ -1,4 +1,4 @@
-using Xunit;
+﻿using Xunit;
 
 namespace CodexHp.App.Tests.Application;
 
@@ -107,8 +107,8 @@ public sealed class ReleaseConfigurationTests
         var english = ReadRequiredRepositoryFile("README.md");
         var korean = ReadRequiredRepositoryFile("README.ko.md");
 
-        Assert.Contains("세션 쿠키는 비밀번호와 같은 비밀 정보", english, StringComparison.Ordinal);
-        Assert.Contains("세션 쿠키는 비밀번호와 같은 비밀 정보", korean, StringComparison.Ordinal);
+        Assert.Contains("비밀번호와 같은 비밀 정보", english, StringComparison.Ordinal);
+        Assert.Contains("비밀번호와 같은 비밀 정보", korean, StringComparison.Ordinal);
     }
 
     [Fact]

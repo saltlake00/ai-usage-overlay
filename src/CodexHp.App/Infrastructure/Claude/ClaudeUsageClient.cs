@@ -7,41 +7,25 @@ using CodexHp.Core.Domain;
 
 namespace CodexHp.App.Infrastructure.Claude;
 
-internal sealed record ClaudeCredentials(string CookieHeader);
-
 internal sealed class UsageProviderException(string message, Exception? innerException = null)
     : Exception(message, innerException);
 
+// Reads the same quota the `claude` CLI reports, via the OAuth usage endpoint that
+// Claude Code itself authenticates against. The earlier implementation scraped
+// claude.ai with a browser session cookie, which reported *web* usage instead.
 internal sealed class ClaudeUsageClient(HttpClient httpClient)
 {
-    private static readonly Uri AccountUri = new("https://claude.ai/api/account");
+    private static readonly Uri UsageUri = new("https://api.anthropic.com/api/oauth/usage");
+    private const string OAuthBetaHeader = "oauth-2025-04-20";
     private readonly HttpClient httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
 
     public async Task<ProviderUsageSnapshot> FetchAsync(
         ClaudeCredentials credentials,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(credentials.CookieHeader);
+        ArgumentException.ThrowIfNullOrWhiteSpace(credentials.AccessToken);
 
-        var account = await this.GetJsonAsync<AccountResponse>(
-            AccountUri,
-            credentials.CookieHeader,
-            "account",
-            cancellationToken);
-        var organizationId = account.Memberships
-            .Select(membership => membership.Organization?.Uuid ?? membership.Uuid)
-            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
-        if (string.IsNullOrWhiteSpace(organizationId))
-        {
-            throw new UsageProviderException("Claude account did not expose an organization.");
-        }
-
-        var usageUri = new Uri($"https://claude.ai/api/organizations/{Uri.EscapeDataString(organizationId)}/usage");
-        var usage = await this.GetJsonAsync<UsageResponse>(
-            usageUri,
-            credentials.CookieHeader,
-            "usage",
-            cancellationToken);
+        var usage = await this.GetUsageAsync(credentials.AccessToken, cancellationToken);
         if (usage.FiveHour is null || usage.SevenDay is null)
         {
             throw new UsageProviderException("Claude usage response did not include both quota windows.");
@@ -55,38 +39,39 @@ internal sealed class ClaudeUsageClient(HttpClient httpClient)
             DateTimeOffset.UtcNow);
     }
 
-    private async Task<T> GetJsonAsync<T>(
-        Uri uri,
-        string cookieHeader,
-        string responseName,
-        CancellationToken cancellationToken)
+    private async Task<UsageResponse> GetUsageAsync(string accessToken, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-        request.Headers.TryAddWithoutValidation("Cookie", cookieHeader);
+        using var request = new HttpRequestMessage(HttpMethod.Get, UsageUri);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        request.Headers.Referrer = new Uri("https://claude.ai/settings/usage");
-        request.Headers.Add("Origin", "https://claude.ai");
+        request.Headers.TryAddWithoutValidation("anthropic-beta", OAuthBetaHeader);
 
         using var response = await this.httpClient.SendAsync(request, cancellationToken);
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
-            throw new UsageProviderException("Claude authentication failed. Sign in again or update the session cookie.");
+            throw new UsageProviderException(
+                "Claude Code authentication was rejected. Run `claude` to sign in again.");
+        }
+
+        if (response.StatusCode is HttpStatusCode.TooManyRequests)
+        {
+            throw new UsageProviderException("Claude usage endpoint is rate limited. It will retry on the next poll.");
         }
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new UsageProviderException($"Claude {responseName} request failed with status {(int)response.StatusCode}.");
+            throw new UsageProviderException($"Claude usage request failed with status {(int)response.StatusCode}.");
         }
 
         try
         {
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: cancellationToken)
-                ?? throw new UsageProviderException($"Claude {responseName} response was empty.");
+            return await JsonSerializer.DeserializeAsync<UsageResponse>(stream, cancellationToken: cancellationToken)
+                ?? throw new UsageProviderException("Claude usage response was empty.");
         }
         catch (JsonException exception)
         {
-            throw new UsageProviderException($"Claude {responseName} response format changed.", exception);
+            throw new UsageProviderException("Claude usage response format changed.", exception);
         }
     }
 
@@ -99,24 +84,41 @@ internal sealed class ClaudeUsageClient(HttpClient httpClient)
     private static DateTimeOffset? ParseTimestamp(string? value) =>
         DateTimeOffset.TryParse(value, out var parsed) ? parsed : null;
 
-    private sealed class AccountResponse
+    // The endpoint returns camelCase; snake_case is accepted as well because the
+    // upstream payload has carried both spellings across versions.
+    private sealed class UsageResponse
     {
-        [JsonPropertyName("memberships")]
-        public AccountMembership[] Memberships { get; init; } = [];
+        [JsonPropertyName("fiveHour")]
+        public UsageWindowResponse? FiveHourCamel { get; init; }
+
+        [JsonPropertyName("five_hour")]
+        public UsageWindowResponse? FiveHourSnake { get; init; }
+
+        [JsonPropertyName("sevenDay")]
+        public UsageWindowResponse? SevenDayCamel { get; init; }
+
+        [JsonPropertyName("seven_day")]
+        public UsageWindowResponse? SevenDaySnake { get; init; }
+
+        [JsonIgnore]
+        public UsageWindowResponse? FiveHour => this.FiveHourCamel ?? this.FiveHourSnake;
+
+        [JsonIgnore]
+        public UsageWindowResponse? SevenDay => this.SevenDayCamel ?? this.SevenDaySnake;
     }
 
-    private sealed record AccountMembership(
-        [property: JsonPropertyName("uuid")] string? Uuid,
-        [property: JsonPropertyName("organization")] AccountOrganization? Organization);
+    private sealed class UsageWindowResponse
+    {
+        [JsonPropertyName("utilization")]
+        public double? Utilization { get; init; }
 
-    private sealed record AccountOrganization(
-        [property: JsonPropertyName("uuid")] string? Uuid);
+        [JsonPropertyName("resetsAt")]
+        public string? ResetsAtCamel { get; init; }
 
-    private sealed record UsageResponse(
-        [property: JsonPropertyName("five_hour")] UsageWindowResponse? FiveHour,
-        [property: JsonPropertyName("seven_day")] UsageWindowResponse? SevenDay);
+        [JsonPropertyName("resets_at")]
+        public string? ResetsAtSnake { get; init; }
 
-    private sealed record UsageWindowResponse(
-        [property: JsonPropertyName("utilization")] double? Utilization,
-        [property: JsonPropertyName("resets_at")] string? ResetsAt);
+        [JsonIgnore]
+        public string? ResetsAt => this.ResetsAtCamel ?? this.ResetsAtSnake;
+    }
 }

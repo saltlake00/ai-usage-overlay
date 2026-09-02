@@ -1,4 +1,4 @@
-# AI Usage Overlay
+﻿# AI Usage Overlay
 
 Windows 11 작업 표시줄 위에서 Codex, Claude, Ollama Cloud의 남은 사용량을 동시에 보여주는 3줄 오버레이입니다.
 
@@ -12,14 +12,13 @@ Windows 11 작업 표시줄 위에서 Codex, Claude, Ollama Cloud의 남은 사�
 
 ## 인증
 
-Codex 인증은 기존 로컬 Codex 설정을 사용합니다. Claude와 Ollama Cloud는 사용자 환경 변수로 세션 쿠키를 받습니다.
+Codex 인증은 기존 로컬 Codex 설정을 사용합니다. Claude는 Claude Code의 기존 로그인(`~/.claude/.credentials.json`)을 읽기 전용으로 사용하므로 별도 설정이 없습니다. Ollama Cloud만 사용자 환경 변수로 세션 쿠키를 받습니다.
 
 ```powershell
-[Environment]::SetEnvironmentVariable('CLAUDE_AI_SESSION_KEY', 'Claude 세션 쿠키 값', 'User')
 [Environment]::SetEnvironmentVariable('OLLAMA_SESSION_COOKIE', 'Ollama Cloud 세션 쿠키 값', 'User')
 ```
 
-세션 쿠키는 비밀번호와 같은 비밀 정보입니다. 공유하거나 저장소에 커밋하지 마세요.
+세션 쿠키와 액세스 토큰은 비밀번호와 같은 비밀 정보입니다. 공유하거나 저장소에 커밋하지 마세요.
 
 ## 저비용 설정
 
