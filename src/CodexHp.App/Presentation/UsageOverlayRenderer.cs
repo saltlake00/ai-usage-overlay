@@ -231,11 +231,11 @@ public static class UsageOverlayRenderer
         var showWeekly = usable >= 40;
         var barHeight = usable >= 52 ? 2 : 0;
         var nameHeight = showName ? Math.Max(9, usable * 22 / 100) : 0;
-        var weeklyHeight = showWeekly ? Math.Max(9, usable * 20 / 100) : 0;
+        var weeklyHeight = showWeekly ? Math.Max(11, usable * 26 / 100) : 0;
         var valueHeight = Math.Max(9, usable - nameHeight - weeklyHeight - barHeight);
         var nameFont = Math.Clamp(nameHeight - 2, 7, 13);
         var valueFont = Math.Clamp(valueHeight - 3, 10, 26);
-        var weeklyFont = Math.Clamp(weeklyHeight - 2, 6, 12);
+        var weeklyFont = Math.Clamp(weeklyHeight - 2, 8, 15);
 
         for (var index = 0; index < rows.Count; index++)
         {
@@ -293,7 +293,10 @@ public static class UsageOverlayRenderer
                     OverlayDrawKind.Text,
                     OverlayElementRole.ProviderWeeklyText,
                     new LayoutRect(left, top, columnWidth, weeklyHeight),
-                    MutedTextColor,
+                    // The weekly window is the one that runs out first in practice,
+                    // so it carries the same risk colour as the headline number
+                    // instead of sitting in muted grey.
+                    row.WeeklyRemainingPercent is { } weekly ? RiskColor(weekly) : MutedTextColor,
                     opacity,
                     $"{row.WeeklyWindowLabel} {FormatMeasure(row.WeeklyRemainingPercent, row.WeeklyTokens)}",
                     weeklyFont));
