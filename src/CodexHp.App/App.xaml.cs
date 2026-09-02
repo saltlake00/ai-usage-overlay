@@ -1,0 +1,617 @@
+using System.Net.Http;
+using CodexHp.App.Application;
+using CodexHp.App.Infrastructure;
+using CodexHp.App.Infrastructure.Claude;
+using CodexHp.App.Infrastructure.Ollama;
+using CodexHp.App.Presentation;
+using CodexHp.App.Presentation.Settings;
+using CodexHp.Core.Domain;
+using CodexHp.Core.Positioning;
+using CodexHp.Core.Settings;
+
+namespace CodexHp.App;
+
+public partial class App : System.Windows.Application
+{
+    private SingleInstanceGuard? singleInstance;
+    private RollingFileLogger? logger;
+    private HttpClient? httpClient;
+    private HttpClient? ollamaHttpClient;
+    private CancellationTokenSource? lifetimeCancellation;
+    private Task? coordinatorTask;
+    private ApplicationCoordinator? primaryCoordinator;
+    private Task? secondaryProvidersTask;
+    private TrayIconController? trayIcon;
+    private UsageOverlayWindow? usageOverlayWindow;
+    private SettingsWindow? settingsWindow;
+    private UsageDetailsWindow? usageDetailsWindow;
+    private SettingsWindowController? settingsWindowController;
+    private OverlayPositionController? positionController;
+    private DisplayEnvironmentWatcher? displayEnvironmentWatcher;
+    private SettingsCommitService? settingsCommitService;
+    private AppSettings activeSettings = AppSettings.Default;
+    private OverlayPresentationSettings activePresentation =
+        OverlayPresentationSettings.FromUnscaled(AppSettings.Default);
+    private UsageOverlayState currentUsageOverlayState = UsageOverlayStateReducer.Reduce(
+        UsageProviderState.Waiting,
+        TokenActivityProviderState.Waiting,
+        ServiceHealthState.Unknown,
+        string.Empty,
+        new VisibilityState(false, false),
+        AppSettings.Default,
+        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+    private int shutdownStarted;
+    private IReadOnlyList<ProviderUsageRowState> secondaryProviderRows =
+    [
+        new ProviderUsageRowState("claude", "A", null, null, true),
+        new ProviderUsageRowState("ollama", "O", null, null, true),
+    ];
+    private readonly SemaphoreSlim claudeRefreshSignal = new(0, 1);
+    private readonly SemaphoreSlim ollamaRefreshSignal = new(0, 1);
+    private readonly SemaphoreSlim usageCacheGate = new(1, 1);
+
+    protected override void OnStartup(System.Windows.StartupEventArgs eventArgs)
+    {
+        base.OnStartup(eventArgs);
+        this.singleInstance = SingleInstanceGuard.TryAcquire();
+        if (this.singleInstance is null)
+        {
+            this.Shutdown();
+            return;
+        }
+
+        try
+        {
+            this.StartApplication();
+        }
+        catch (Exception exception)
+        {
+            this.logger?.Log(DiagnosticLevel.Error, "Startup", "AI Usage Overlay could not start.", exception);
+            System.Windows.MessageBox.Show(
+                $"{UserInterfaceText.StartupFailure}\n\n{exception.Message}",
+                "AI Usage Overlay",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Error);
+            this.DisposeResources();
+            this.Shutdown();
+        }
+    }
+
+    protected override void OnSessionEnding(System.Windows.SessionEndingCancelEventArgs eventArgs)
+    {
+        this.BeginShutdown();
+        base.OnSessionEnding(eventArgs);
+    }
+
+    protected override void OnExit(System.Windows.ExitEventArgs eventArgs)
+    {
+        this.DisposeResources();
+        base.OnExit(eventArgs);
+    }
+
+    private void StartApplication()
+    {
+        this.logger = new RollingFileLogger();
+        var monitorService = new WindowsMonitorService();
+        var taskbarLocator = new TaskbarWindowLocator();
+        Func<string, PhysicalRect?> taskbarBounds = monitorId =>
+            taskbarLocator.FindForMonitor(monitorId)?.TaskbarBounds;
+        var settingsStore = new JsonSettingsStore(
+            monitors: monitorService.GetMonitors,
+            taskbarBounds: taskbarBounds);
+        var startupRegistration = new StartupRegistration(
+            Environment.ProcessPath ?? throw new InvalidOperationException("The executable path is not available."));
+        this.activeSettings = settingsStore.Load() with
+        {
+            StartWithWindows = startupRegistration.IsEnabled(),
+        };
+        var settingsCommitService = new SettingsCommitService(settingsStore, startupRegistration);
+        this.settingsCommitService = settingsCommitService;
+        this.positionController = new OverlayPositionController(monitorService, taskbarBounds);
+        var displayResolution = this.positionController.Resolve(this.activeSettings);
+        this.activePresentation = new OverlayPresentationSettings(
+            this.activeSettings.Colors,
+            displayResolution.Appearance);
+
+        this.usageOverlayWindow = new UsageOverlayWindow(
+            new OverlayWindowHost(taskbarLocator, monitorService));
+        this.usageOverlayWindow.Apply(this.currentUsageOverlayState, this.activePresentation);
+        this.usageOverlayWindow.SetPlacement(displayResolution.Placement);
+        this.usageOverlayWindow.OpenSettingsRequested += (_, _) => this.OpenSettings();
+        this.usageOverlayWindow.ProviderDetailsRequested += this.OpenProviderDetails;
+        this.usageOverlayWindow.OverlayPositionChanged += this.OnOverlayPositionChanged;
+        this.usageOverlayWindow.DisplayEnvironmentChangeRequested +=
+            (_, _) => this.displayEnvironmentWatcher?.RequestRefresh();
+        this.usageOverlayWindow.Show();
+        this.displayEnvironmentWatcher = new DisplayEnvironmentWatcher(
+            this.Dispatcher,
+            this.RefreshDisplayEnvironment);
+
+        this.settingsWindowController = new SettingsWindowController(
+            () => new SettingsWindowViewModel(
+                this.activeSettings,
+                this.ApplySettingsPreview,
+                enabled => this.usageOverlayWindow.SetOverlayPositionChangeMode(enabled),
+                desired => settingsCommitService.Commit(desired),
+                canStartWithWindows: startupRegistration.CanEnable),
+            this.ShowSettingsWindow,
+            this.ActivateSettingsWindow);
+
+        this.trayIcon = new TrayIconController(
+            this.OpenSettings,
+            this.BeginShutdown,
+            this.RequestProviderRefresh,
+            this.ToggleOverlayPositionLock);
+        this.httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(10),
+        };
+        this.lifetimeCancellation = new CancellationTokenSource();
+        var clock = new SystemClock();
+        var serviceStatusClient = new OpenAiServiceStatusClient(this.httpClient);
+        var serviceStatusPoller = new OpenAiServiceStatusPoller(
+            serviceStatusClient.FetchAsync,
+            () => clock.UnixTimeMilliseconds);
+        var visibilitySource = new WindowsVisibilitySource(
+            new ChatGptProcessDetector(),
+            new FullscreenDetector(),
+            monitorService);
+        var coordinator = new ApplicationCoordinator(
+            new CodexCredentialSource(),
+            new OpenAiUsageClient(this.httpClient),
+            new CodexTokenUsageScanner(),
+            serviceStatusPoller.ReadAsync,
+            () => visibilitySource.Read(this.usageOverlayWindow.WindowHandle),
+            () => Volatile.Read(ref this.activeSettings),
+            clock,
+            this.logger,
+            readGraphAppearance: () => ToAppearanceSettings(
+                Volatile.Read(ref this.activePresentation).Appearance));
+        this.primaryCoordinator = coordinator;
+        coordinator.UsageOverlayStateChanged += this.OnUsageOverlayStateChanged;
+        this.coordinatorTask = this.RunCoordinatorAsync(coordinator, this.lifetimeCancellation.Token);
+        this.ollamaHttpClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+        {
+            Timeout = TimeSpan.FromSeconds(10),
+        };
+        var claudeCredentials = new ClaudeCredentialSource();
+        var claudeClient = new ClaudeUsageClient(this.httpClient);
+        var ollamaCredentials = new OllamaCredentialSource();
+        var ollamaClient = new OllamaUsageClient(this.ollamaHttpClient);
+        var secondaryCoordinator = new MultiProviderCoordinator(
+        [
+            new DelegateUsageProvider("claude", cancellationToken =>
+                claudeClient.FetchAsync(claudeCredentials.Load(), cancellationToken)),
+            new DelegateUsageProvider("ollama", cancellationToken =>
+                ollamaClient.FetchAsync(ollamaCredentials.Load(), cancellationToken)),
+        ]);
+        var usageCache = new ProviderUsageCache();
+        this.secondaryProvidersTask = Task.WhenAll(
+            this.RunSecondaryProviderAsync(
+                "claude",
+                secondaryCoordinator,
+                usageCache,
+                this.claudeRefreshSignal,
+                this.lifetimeCancellation.Token),
+            this.RunSecondaryProviderAsync(
+                "ollama",
+                secondaryCoordinator,
+                usageCache,
+                this.ollamaRefreshSignal,
+                this.lifetimeCancellation.Token));
+        this.logger.Log(DiagnosticLevel.Information, "Lifecycle", "AI Usage Overlay started.");
+    }
+
+    private async Task RunSecondaryProviderAsync(
+        string providerId,
+        MultiProviderCoordinator coordinator,
+        ProviderUsageCache cache,
+        SemaphoreSlim refreshSignal,
+        CancellationToken cancellationToken)
+    {
+        var schedule = new ProviderPollSchedule();
+        try
+        {
+            if (providerId == "claude")
+            {
+                try
+                {
+                    var cached = await cache.LoadAsync(cancellationToken);
+                    if (cached.Count > 0)
+                    {
+                        this.secondaryProviderRows = cached
+                            .Where(snapshot => snapshot.Id is "claude" or "ollama")
+                            .Select(snapshot => ToProviderRow(snapshot, isStale: true))
+                            .ToArray();
+                        _ = this.Dispatcher.BeginInvoke(this.ApplyCurrentProviderRows);
+                    }
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    this.logger?.Log(DiagnosticLevel.Warning, "UsageCache", "The display cache could not be loaded.", exception);
+                }
+            }
+
+            while (true)
+            {
+                var state = await coordinator.RefreshOneAsync(providerId, cancellationToken);
+                var states = coordinator.CurrentStates;
+                var snapshots = states
+                    .Select(state => state.LastSuccessful)
+                    .Where(snapshot => snapshot is not null)
+                    .Cast<ProviderUsageSnapshot>()
+                    .ToArray();
+                if (snapshots.Length > 0)
+                {
+                    await this.usageCacheGate.WaitAsync(cancellationToken);
+                    try
+                    {
+                        await cache.SaveAsync(snapshots, cancellationToken);
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException)
+                    {
+                        this.logger?.Log(DiagnosticLevel.Warning, "UsageCache", "The display cache could not be saved.", exception);
+                    }
+                    finally
+                    {
+                        this.usageCacheGate.Release();
+                    }
+                }
+
+                this.secondaryProviderRows = states.Select(ToProviderRow).ToArray();
+                _ = this.Dispatcher.BeginInvoke(this.ApplyCurrentProviderRows);
+                var outcome = state.Availability == ProviderAvailability.Failed
+                    ? PollOutcome.Failure
+                    : PollOutcome.Success;
+                var hidden = !this.currentUsageOverlayState.IsVisible;
+                _ = await refreshSignal.WaitAsync(
+                    schedule.NextDelay(outcome, hidden),
+                    cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            this.logger?.Log(DiagnosticLevel.Error, "Providers", "The secondary provider loop stopped unexpectedly.", exception);
+        }
+    }
+
+    private static ProviderUsageRowState ToProviderRow(ProviderUsageState state)
+    {
+        var snapshot = state.LastSuccessful;
+        return snapshot is null
+            ? new ProviderUsageRowState(
+                state.Id,
+                state.Id.Equals("claude", StringComparison.OrdinalIgnoreCase) ? "A" : "O",
+                null,
+                null,
+                true)
+            : ToProviderRow(snapshot, state.Availability != ProviderAvailability.Current);
+    }
+
+    private static ProviderUsageRowState ToProviderRow(
+        ProviderUsageSnapshot snapshot,
+        bool isStale) => new(
+            snapshot.Id,
+            snapshot.Id.Equals("claude", StringComparison.OrdinalIgnoreCase) ? "A" : "O",
+            (int)Math.Round(snapshot.ShortWindow.RemainingPercent),
+            (int)Math.Round(snapshot.WeeklyWindow.RemainingPercent),
+            isStale);
+
+    private void ApplyCurrentProviderRows()
+    {
+        if (this.usageOverlayWindow is null || Volatile.Read(ref this.shutdownStarted) != 0)
+        {
+            return;
+        }
+
+        this.currentUsageOverlayState = this.currentUsageOverlayState with
+        {
+            ProviderRows = this.ComposeProviderRows(this.currentUsageOverlayState),
+        };
+        this.usageOverlayWindow.Apply(this.currentUsageOverlayState, this.activePresentation);
+    }
+
+    private IReadOnlyList<ProviderUsageRowState> ComposeProviderRows(UsageOverlayState state) =>
+    [
+        new ProviderUsageRowState(
+            "codex",
+            "C",
+            state.ManaBar.RemainingPercent,
+            state.HpBar.RemainingPercent,
+            state.ManaBar.IsStale || state.HpBar.IsStale),
+        .. this.secondaryProviderRows,
+    ];
+
+    private async Task RunCoordinatorAsync(
+        ApplicationCoordinator coordinator,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await coordinator.RunAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            this.logger?.Log(DiagnosticLevel.Error, "Coordinator", "The coordinator stopped unexpectedly.", exception);
+            _ = this.Dispatcher.BeginInvoke(this.BeginShutdown);
+        }
+    }
+
+    private void OnUsageOverlayStateChanged(UsageOverlayState state)
+    {
+        this.Dispatcher.BeginInvoke(() =>
+        {
+            if (Volatile.Read(ref this.shutdownStarted) != 0 || this.usageOverlayWindow is null)
+            {
+                return;
+            }
+
+            this.currentUsageOverlayState = state with { ProviderRows = this.ComposeProviderRows(state) };
+            this.usageOverlayWindow.Apply(this.currentUsageOverlayState, this.activePresentation);
+        });
+    }
+
+    private static AppearanceSettings ToAppearanceSettings(EffectiveAppearanceSettings appearance) =>
+        new(
+            appearance.OverlayWidth,
+            appearance.OverlayHeight,
+            appearance.GaugePaneWidth,
+            appearance.GraphBarWidth,
+            appearance.GraphBarGap,
+            appearance.StatusStripeWidth);
+
+    private void ApplySettingsPreview(AppSettings settings)
+    {
+        this.activeSettings = settings;
+        if (this.usageOverlayWindow is null || this.positionController is null)
+        {
+            return;
+        }
+
+        var displayResolution = this.positionController.Resolve(settings);
+        this.activePresentation = new OverlayPresentationSettings(
+            settings.Colors,
+            displayResolution.Appearance);
+        this.usageOverlayWindow.Apply(this.currentUsageOverlayState, this.activePresentation);
+        this.usageOverlayWindow.SetPlacement(displayResolution.Placement);
+    }
+
+    private void OnOverlayPositionChanged(CodexHp.Core.Positioning.PhysicalRect overlayBounds)
+    {
+        if (this.positionController is null)
+        {
+            return;
+        }
+
+        var location = this.positionController.Capture(overlayBounds);
+        if (this.settingsWindowController?.Current is { } viewModel)
+        {
+            viewModel.PreviewLocation(location);
+            return;
+        }
+
+        if (this.settingsCommitService is not null)
+        {
+            this.activeSettings = this.settingsCommitService.Commit(
+                this.activeSettings with { Location = location });
+        }
+    }
+
+    private void RefreshDisplayEnvironment()
+    {
+        if (Volatile.Read(ref this.shutdownStarted) != 0
+            || this.usageOverlayWindow is null
+            || this.positionController is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var resolution = this.positionController.Resolve(this.activeSettings);
+            this.activePresentation = new OverlayPresentationSettings(
+                this.activeSettings.Colors,
+                resolution.Appearance);
+            this.usageOverlayWindow.Apply(this.currentUsageOverlayState, this.activePresentation);
+            this.usageOverlayWindow.SetPlacement(resolution.Placement);
+            this.ConstrainSettingsWindow(resolution.Placement.MonitorId, center: false);
+        }
+        catch (Exception exception)
+        {
+            this.logger?.Log(
+                DiagnosticLevel.Warning,
+                "Display",
+                "The display environment could not be refreshed.",
+                exception);
+        }
+    }
+
+    private void OpenSettings()
+    {
+        if (!this.Dispatcher.CheckAccess())
+        {
+            this.Dispatcher.BeginInvoke(this.OpenSettings);
+            return;
+        }
+
+        this.settingsWindowController?.Open();
+    }
+
+    private void OpenProviderDetails(string? providerId)
+    {
+        if (!this.Dispatcher.CheckAccess())
+        {
+            this.Dispatcher.BeginInvoke(() => this.OpenProviderDetails(providerId));
+            return;
+        }
+
+        if (this.usageDetailsWindow is null)
+        {
+            this.usageDetailsWindow = new UsageDetailsWindow();
+            this.usageDetailsWindow.Closed += (_, _) => this.usageDetailsWindow = null;
+        }
+
+        this.usageDetailsWindow.Apply(this.currentUsageOverlayState.ProviderRows, providerId);
+        this.usageDetailsWindow.Show();
+        this.usageDetailsWindow.Activate();
+    }
+
+    private void RequestProviderRefresh()
+    {
+        if (this.claudeRefreshSignal.CurrentCount == 0)
+        {
+            this.claudeRefreshSignal.Release();
+        }
+
+        if (this.ollamaRefreshSignal.CurrentCount == 0)
+        {
+            this.ollamaRefreshSignal.Release();
+        }
+
+        if (this.primaryCoordinator is not null && this.lifetimeCancellation is not null)
+        {
+            _ = this.RefreshPrimaryProviderAsync(
+                this.primaryCoordinator,
+                this.lifetimeCancellation.Token);
+        }
+    }
+
+    private async Task RefreshPrimaryProviderAsync(
+        ApplicationCoordinator coordinator,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await coordinator.PollUsageOnceAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private void ToggleOverlayPositionLock()
+    {
+        if (this.usageOverlayWindow is null)
+        {
+            return;
+        }
+
+        this.usageOverlayWindow.SetOverlayPositionChangeMode(
+            !this.usageOverlayWindow.IsOverlayPositionChangeMode);
+    }
+
+    private void ShowSettingsWindow(SettingsWindowViewModel viewModel)
+    {
+        var window = new SettingsWindow(viewModel);
+        this.settingsWindow = window;
+        window.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(this.settingsWindow, window))
+            {
+                this.settingsWindow = null;
+            }
+        };
+        window.Show();
+        if (this.positionController is { } controller)
+        {
+            var resolution = controller.Resolve(this.activeSettings);
+            this.ConstrainSettingsWindow(resolution.Placement.MonitorId, center: true);
+        }
+    }
+
+    private void ConstrainSettingsWindow(string monitorId, bool center)
+    {
+        if (this.settingsWindow is null || this.positionController is null)
+        {
+            return;
+        }
+
+        var monitor = this.positionController.GetDisplays()
+            .Select(display => display.Monitor)
+            .FirstOrDefault(candidate => string.Equals(
+                candidate.Id,
+                monitorId,
+                StringComparison.OrdinalIgnoreCase));
+        if (monitor is not null)
+        {
+            this.settingsWindow.ConstrainToWorkArea(monitor, center);
+        }
+    }
+
+    private void ActivateSettingsWindow(SettingsWindowViewModel viewModel)
+    {
+        if (this.settingsWindow is null)
+        {
+            return;
+        }
+
+        if (this.settingsWindow.WindowState == System.Windows.WindowState.Minimized)
+        {
+            this.settingsWindow.WindowState = System.Windows.WindowState.Normal;
+        }
+
+        this.settingsWindow.Activate();
+    }
+
+    private void BeginShutdown()
+    {
+        if (!this.Dispatcher.CheckAccess())
+        {
+            this.Dispatcher.BeginInvoke(this.BeginShutdown);
+            return;
+        }
+
+        if (Interlocked.Exchange(ref this.shutdownStarted, 1) != 0)
+        {
+            return;
+        }
+
+        _ = this.ShutdownAsync();
+    }
+
+    private async Task ShutdownAsync()
+    {
+        this.trayIcon?.Dispose();
+        this.trayIcon = null;
+        this.lifetimeCancellation?.Cancel();
+        if (this.coordinatorTask is not null)
+        {
+            await this.coordinatorTask;
+        }
+        if (this.secondaryProvidersTask is not null)
+        {
+            await this.secondaryProvidersTask;
+        }
+
+        this.settingsWindowController?.Current?.Cancel(SettingsCancelTrigger.WindowClose);
+        this.usageOverlayWindow?.CloseForShutdown();
+        this.logger?.Log(DiagnosticLevel.Information, "Lifecycle", "AI Usage Overlay stopped.");
+        this.DisposeResources();
+        this.Shutdown();
+    }
+
+    private void DisposeResources()
+    {
+        this.lifetimeCancellation?.Cancel();
+        this.lifetimeCancellation?.Dispose();
+        this.lifetimeCancellation = null;
+        this.trayIcon?.Dispose();
+        this.trayIcon = null;
+        this.displayEnvironmentWatcher?.Dispose();
+        this.displayEnvironmentWatcher = null;
+        this.usageOverlayWindow?.CloseForShutdown();
+        this.usageOverlayWindow = null;
+        this.httpClient?.Dispose();
+        this.httpClient = null;
+        this.ollamaHttpClient?.Dispose();
+        this.ollamaHttpClient = null;
+        this.singleInstance?.Dispose();
+        this.singleInstance = null;
+    }
+}
