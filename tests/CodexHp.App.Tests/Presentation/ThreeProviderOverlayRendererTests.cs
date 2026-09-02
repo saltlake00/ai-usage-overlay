@@ -1,4 +1,4 @@
-using CodexHp.App.Presentation;
+﻿using CodexHp.App.Presentation;
 using CodexHp.Core.Domain;
 using CodexHp.Core.Settings;
 using Xunit;
@@ -7,6 +7,51 @@ namespace CodexHp.App.Tests.Presentation;
 
 public sealed class ThreeProviderOverlayRendererTests
 {
+    [Fact]
+    public void A_token_counted_row_shows_the_count_instead_of_a_percent_gauge()
+    {
+        var layout = UsageOverlayRenderer.CreateLayout(
+            BaseState() with
+            {
+                ProviderRows =
+                [
+                    new ProviderUsageRowState(
+                        "claude",
+                        "A",
+                        null,
+                        null,
+                        false,
+                        ShortTokens: 460_292,
+                        WeeklyTokens: 7_864_494),
+                ],
+            },
+            AppSettings.Default,
+            false);
+
+        var texts = layout.Commands
+            .Where(command => command.Kind == OverlayDrawKind.Text)
+            .Select(command => command.Text)
+            .ToArray();
+
+        Assert.Contains(texts, text => text is not null && text.Contains("460.3K", StringComparison.Ordinal));
+        Assert.Contains(texts, text => text is not null && text.Contains("7.9M", StringComparison.Ordinal));
+        Assert.DoesNotContain(texts, text => text is not null && text.Contains("--%", StringComparison.Ordinal));
+
+        // No fill is drawn: a bar would imply a limit the local count does not have.
+        Assert.DoesNotContain(
+            layout.Commands,
+            command => command.Role is OverlayElementRole.ProviderShortFill or OverlayElementRole.ProviderWeeklyFill);
+    }
+
+    [Theory]
+    [InlineData(999, "999")]
+    [InlineData(1_500, "1.5K")]
+    [InlineData(460_292, "460.3K")]
+    [InlineData(7_864_494, "7.9M")]
+    [InlineData(2_563_375_121, "2.6B")]
+    public void FormatTokens_abbreviates_to_fit_the_row(long tokens, string expected) =>
+        Assert.Equal(expected, UsageOverlayRenderer.FormatTokens(tokens));
+
     [Fact]
     public void Default_height_keeps_every_provider_element_inside_the_bitmap()
     {

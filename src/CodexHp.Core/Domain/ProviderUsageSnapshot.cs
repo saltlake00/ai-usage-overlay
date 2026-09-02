@@ -1,4 +1,4 @@
-namespace CodexHp.Core.Domain;
+﻿namespace CodexHp.Core.Domain;
 
 public sealed record UsageWindow(
     double RemainingPercent,
@@ -17,9 +17,14 @@ public sealed record UsageWindow(
     }
 }
 
+// ShortTokens/WeeklyTokens carry an absolute count for providers whose usage is
+// read from local records, where no quota denominator exists to form a percent.
+// A provider that reports a quota leaves them null and fills the windows instead.
 public sealed record ProviderUsageSnapshot(
     string Id,
     string Label,
     UsageWindow ShortWindow,
     UsageWindow WeeklyWindow,
-    DateTimeOffset FetchedAt);
+    DateTimeOffset FetchedAt,
+    long? ShortTokens = null,
+    long? WeeklyTokens = null);

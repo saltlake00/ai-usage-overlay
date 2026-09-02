@@ -1,4 +1,4 @@
-using CodexHp.Core.Domain;
+﻿using CodexHp.Core.Domain;
 using CodexHp.Core.Settings;
 
 namespace CodexHp.App.Presentation;
@@ -231,6 +231,7 @@ public static class UsageOverlayRenderer
             AddProviderGauge(
                 commands,
                 row.ShortRemainingPercent,
+                row.ShortTokens,
                 shortBounds,
                 row.Id.Equals("ollama", StringComparison.OrdinalIgnoreCase) ? "단기" : "5h",
                 OverlayElementRole.ProviderShortTrack,
@@ -241,6 +242,7 @@ public static class UsageOverlayRenderer
             AddProviderGauge(
                 commands,
                 row.WeeklyRemainingPercent,
+                row.WeeklyTokens,
                 weeklyBounds,
                 "주간",
                 OverlayElementRole.ProviderWeeklyTrack,
@@ -262,6 +264,7 @@ public static class UsageOverlayRenderer
     private static void AddProviderGauge(
         ICollection<OverlayDrawCommand> commands,
         int? remainingPercent,
+        long? tokens,
         LayoutRect bounds,
         string prefix,
         OverlayElementRole trackRole,
@@ -270,13 +273,29 @@ public static class UsageOverlayRenderer
         double opacity,
         int fontSize)
     {
+        commands.Add(Rectangle(trackRole, bounds, GaugeTrackColor, opacity));
+
+        // A token count has no quota to fill a bar against, so the row shows the
+        // number on the bare track instead of a gauge that would imply a limit.
+        if (remainingPercent is null && tokens is { } count)
+        {
+            commands.Add(new OverlayDrawCommand(
+                OverlayDrawKind.Text,
+                textRole,
+                bounds,
+                White,
+                opacity,
+                $"{prefix} {FormatTokens(count)}",
+                fontSize));
+            return;
+        }
+
         var normalized = Math.Clamp(remainingPercent ?? 0, 0, 100);
         var color = normalized <= 15
             ? CriticalColor
             : normalized <= 30
                 ? WarningColor
                 : HealthyColor;
-        commands.Add(Rectangle(trackRole, bounds, GaugeTrackColor, opacity));
         commands.Add(Rectangle(fillRole, bounds with { Width = bounds.Width * normalized / 100 }, color, opacity));
         commands.Add(new OverlayDrawCommand(
             OverlayDrawKind.Text,
@@ -287,6 +306,16 @@ public static class UsageOverlayRenderer
             $"{prefix} {(remainingPercent is { } value ? $"{Math.Clamp(value, 0, 100)}%" : "--%")}",
             fontSize));
     }
+
+    // The overlay row is a few characters wide, so counts are abbreviated rather
+    // than truncated by the text renderer.
+    internal static string FormatTokens(long tokens) => tokens switch
+    {
+        >= 1_000_000_000 => $"{tokens / 1_000_000_000d:0.#}B",
+        >= 1_000_000 => $"{tokens / 1_000_000d:0.#}M",
+        >= 1_000 => $"{tokens / 1_000d:0.#}K",
+        _ => tokens.ToString(),
+    };
 
     private static void AddGauge(
         ICollection<OverlayDrawCommand> commands,

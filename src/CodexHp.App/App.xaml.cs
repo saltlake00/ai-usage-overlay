@@ -176,12 +176,18 @@ public partial class App : System.Windows.Application
         };
         var claudeCredentials = new ClaudeCredentialSource();
         var claudeClient = new ClaudeUsageClient(this.httpClient);
+        var claudeLocalUsage = new ClaudeLocalUsageSource();
         var ollamaCredentials = new OllamaCredentialSource();
         var ollamaClient = new OllamaUsageClient(this.ollamaHttpClient);
         var secondaryCoordinator = new MultiProviderCoordinator(
         [
-            new DelegateUsageProvider("claude", cancellationToken =>
-                claudeClient.FetchAsync(claudeCredentials.Load(), cancellationToken)),
+            new DelegateUsageProvider(
+                "claude",
+                cancellationToken => this.FetchClaudeUsageAsync(
+                    claudeCredentials,
+                    claudeClient,
+                    claudeLocalUsage,
+                    cancellationToken)),
             new DelegateUsageProvider("ollama", cancellationToken =>
                 ollamaClient.FetchAsync(ollamaCredentials.Load(), cancellationToken)),
         ]);
@@ -299,14 +305,57 @@ public partial class App : System.Windows.Application
             : ToProviderRow(snapshot, state.Availability != ProviderAvailability.Current);
     }
 
+    // The quota endpoint needs an unexpired Claude Code token, which is often not
+    // what sits on disk. Claude Code's own transcripts are always there, so a
+    // failed quota read degrades to counting them rather than to a blank row.
+    private async Task<ProviderUsageSnapshot> FetchClaudeUsageAsync(
+        ClaudeCredentialSource credentials,
+        ClaudeUsageClient client,
+        ClaudeLocalUsageSource localUsage,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await client.FetchAsync(credentials.Load(), cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            this.logger?.Log(
+                DiagnosticLevel.Information,
+                "Providers",
+                $"claude: quota unavailable ({exception.Message}) - counting local transcripts instead.");
+            var local = localUsage.Read(cancellationToken);
+            this.logger?.Log(
+                DiagnosticLevel.Information,
+                "Providers",
+                $"claude: local tokens 5h={local.ShortTokens:N0} 7d={local.WeeklyTokens:N0} (messages 5h={local.ShortMessages:N0}).");
+            return new ProviderUsageSnapshot(
+                "claude",
+                "Claude",
+                UsageWindow.FromUsedPercent(0, null, TimeSpan.FromHours(5)),
+                UsageWindow.FromUsedPercent(0, null, TimeSpan.FromDays(7)),
+                local.ObservedAt,
+                local.ShortTokens,
+                local.WeeklyTokens);
+        }
+    }
+
+    // A token-counted snapshot has no quota to draw a gauge from, so the percent
+    // stays null and the row carries the counts instead.
     private static ProviderUsageRowState ToProviderRow(
         ProviderUsageSnapshot snapshot,
-        bool isStale) => new(
+        bool isStale)
+    {
+        var countsOnly = snapshot.ShortTokens is not null || snapshot.WeeklyTokens is not null;
+        return new ProviderUsageRowState(
             snapshot.Id,
             snapshot.Id.Equals("claude", StringComparison.OrdinalIgnoreCase) ? "A" : "O",
-            (int)Math.Round(snapshot.ShortWindow.RemainingPercent),
-            (int)Math.Round(snapshot.WeeklyWindow.RemainingPercent),
-            isStale);
+            countsOnly ? null : (int)Math.Round(snapshot.ShortWindow.RemainingPercent),
+            countsOnly ? null : (int)Math.Round(snapshot.WeeklyWindow.RemainingPercent),
+            isStale,
+            snapshot.ShortTokens,
+            snapshot.WeeklyTokens);
+    }
 
     private void ApplyCurrentProviderRows()
     {

@@ -1,4 +1,4 @@
-using CodexHp.Core.Settings;
+﻿using CodexHp.Core.Settings;
 
 namespace CodexHp.Core.Domain;
 
@@ -23,4 +23,6 @@ public sealed record ProviderUsageRowState(
     string ShortLabel,
     int? ShortRemainingPercent,
     int? WeeklyRemainingPercent,
-    bool IsStale);
+    bool IsStale,
+    long? ShortTokens = null,
+    long? WeeklyTokens = null);

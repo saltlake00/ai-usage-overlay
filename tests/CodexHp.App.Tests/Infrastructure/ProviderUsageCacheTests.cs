@@ -1,4 +1,4 @@
-using CodexHp.App.Infrastructure;
+﻿using CodexHp.App.Infrastructure;
 using CodexHp.Core.Domain;
 using Xunit;
 
@@ -17,7 +17,9 @@ public sealed class ProviderUsageCacheTests
             "Claude",
             new UsageWindow(72.5, DateTimeOffset.Parse("2026-09-02T05:00:00Z"), TimeSpan.FromHours(5)),
             new UsageWindow(39, DateTimeOffset.Parse("2026-09-09T00:00:00Z"), TimeSpan.FromDays(7)),
-            DateTimeOffset.Parse("2026-09-02T00:00:00Z"));
+            DateTimeOffset.Parse("2026-09-02T00:00:00Z"),
+            ShortTokens: 383_329,
+            WeeklyTokens: 7_787_531);
 
         try
         {
@@ -25,8 +27,12 @@ public sealed class ProviderUsageCacheTests
             var raw = await File.ReadAllTextAsync(path);
             var restored = await cache.LoadAsync(CancellationToken.None);
 
-            Assert.DoesNotContain("cookie", raw, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("token", raw, StringComparison.OrdinalIgnoreCase);
+            // The guard is about credential material, not the word "token": the cache
+            // legitimately stores token *counts* read from local transcripts.
+            foreach (var secret in new[] { "cookie", "accessToken", "refreshToken", "sessionKey", "Bearer" })
+            {
+                Assert.DoesNotContain(secret, raw, StringComparison.OrdinalIgnoreCase);
+            }
             Assert.Equal(snapshot, Assert.Single(restored));
         }
         finally
