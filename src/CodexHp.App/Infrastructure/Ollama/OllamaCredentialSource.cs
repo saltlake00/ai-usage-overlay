@@ -1,9 +1,11 @@
+﻿using CodexHp.App.Application;
+
 namespace CodexHp.App.Infrastructure.Ollama;
 
 internal sealed record OllamaCredentials(string? CookieHeader, string? ApiKey);
 
 internal sealed class OllamaUsageException(string message, Exception? innerException = null)
-    : Exception(message, innerException);
+    : Exception(message, innerException), IActionableProviderError;
 
 internal sealed class OllamaCredentialSource
 {

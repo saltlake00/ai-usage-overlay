@@ -1,4 +1,4 @@
-using CodexHp.Core.Domain;
+﻿using CodexHp.Core.Domain;
 
 namespace CodexHp.App.Application;
 
@@ -72,18 +72,25 @@ internal sealed class MultiProviderCoordinator
         {
             throw;
         }
-        catch
+        catch (Exception exception)
         {
             ProviderUsageState previous;
             lock (this.sync)
             {
                 previous = this.states[provider.Id];
             }
+
+            // Keep the provider's own message: the credential sources and clients
+            // phrase these as the next action to take ("run `claude` to sign in"),
+            // and they are written never to echo a token or cookie. Collapsing them
+            // into one generic string left every failure undiagnosable.
             return new ProviderUsageState(
                 provider.Id,
                 ProviderAvailability.Failed,
                 previous.LastSuccessful,
-                "Usage unavailable");
+                exception is IActionableProviderError && !string.IsNullOrWhiteSpace(exception.Message)
+                    ? exception.Message
+                    : "Usage unavailable");
         }
     }
 }

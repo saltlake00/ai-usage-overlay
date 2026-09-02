@@ -1,4 +1,4 @@
-using CodexHp.App.Application;
+﻿using CodexHp.App.Application;
 using CodexHp.Core.Domain;
 using Xunit;
 
@@ -23,6 +23,20 @@ public sealed class MultiProviderCoordinatorTests
         Assert.Equal(ProviderAvailability.Current, result[2].Availability);
         Assert.Null(result[1].LastSuccessful);
         Assert.DoesNotContain("secret-token", result[1].Error ?? string.Empty);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_surfaces_an_authored_provider_message_so_the_failure_is_actionable()
+    {
+        var coordinator = new MultiProviderCoordinator([
+            new StubProvider("claude", () => throw new ActionableStubException(
+                "Claude Code is not signed in. Run `claude` to sign in.")),
+        ]);
+
+        var state = Assert.Single(await coordinator.RefreshAsync(CancellationToken.None));
+
+        Assert.Equal(ProviderAvailability.Failed, state.Availability);
+        Assert.Equal("Claude Code is not signed in. Run `claude` to sign in.", state.Error);
     }
 
     [Fact]
@@ -74,6 +88,9 @@ public sealed class MultiProviderCoordinatorTests
         new UsageWindow(shortRemaining, null, TimeSpan.FromHours(5)),
         new UsageWindow(weeklyRemaining, null, TimeSpan.FromDays(7)),
         DateTimeOffset.Parse("2026-09-02T00:00:00Z"));
+
+    private sealed class ActionableStubException(string message)
+        : Exception(message), IActionableProviderError;
 
     private sealed class StubProvider(string id, Func<Task<ProviderUsageSnapshot>> fetch) : IUsageProvider
     {

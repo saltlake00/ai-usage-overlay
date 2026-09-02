@@ -1,3 +1,4 @@
+﻿using CodexHp.App.Application;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -8,7 +9,7 @@ using CodexHp.Core.Domain;
 namespace CodexHp.App.Infrastructure.Claude;
 
 internal sealed class UsageProviderException(string message, Exception? innerException = null)
-    : Exception(message, innerException);
+    : Exception(message, innerException), IActionableProviderError;
 
 // Reads the same quota the `claude` CLI reports, via the OAuth usage endpoint that
 // Claude Code itself authenticates against. The earlier implementation scraped

@@ -1,4 +1,4 @@
-using System.Net.Http;
+﻿using System.Net.Http;
 using CodexHp.App.Application;
 using CodexHp.App.Infrastructure;
 using CodexHp.App.Infrastructure.Claude;
@@ -235,6 +235,14 @@ public partial class App : System.Windows.Application
             while (true)
             {
                 var state = await coordinator.RefreshOneAsync(providerId, cancellationToken);
+                if (state.Availability == ProviderAvailability.Failed)
+                {
+                    this.logger?.Log(
+                        DiagnosticLevel.Warning,
+                        "Providers",
+                        $"{providerId}: {state.Error}");
+                }
+
                 var states = coordinator.CurrentStates;
                 var snapshots = states
                     .Select(state => state.LastSuccessful)

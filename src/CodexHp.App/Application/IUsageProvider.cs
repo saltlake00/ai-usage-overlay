@@ -24,3 +24,11 @@ internal sealed record ProviderUsageState(
     ProviderAvailability Availability,
     ProviderUsageSnapshot? LastSuccessful,
     string? Error);
+
+// Marks an exception whose message was authored for the user and is known not to
+// carry a token or cookie. Only these messages survive into ProviderUsageState.Error;
+// anything else collapses to a generic string so an arbitrary exception (a request
+// URL, a parser dump) can never leak a secret onto the overlay.
+internal interface IActionableProviderError
+{
+}
