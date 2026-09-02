@@ -46,6 +46,7 @@ public partial class App : System.Windows.Application
         new ProviderUsageRowState("claude", "CLAUDE", null, null, true),
         new ProviderUsageRowState("ollama", "OLLAMA", null, null, true, ShortWindowLabel: "SHORT"),
     ];
+    private readonly ClaudeQuotaFallbackPolicy claudeQuotaFallback = new();
     private readonly SemaphoreSlim claudeRefreshSignal = new(0, 1);
     private readonly SemaphoreSlim ollamaRefreshSignal = new(0, 1);
     private readonly SemaphoreSlim usageCacheGate = new(1, 1);
@@ -317,10 +318,24 @@ public partial class App : System.Windows.Application
     {
         try
         {
-            return await client.FetchAsync(credentials.Load(), cancellationToken);
+            var quota = await client.FetchAsync(credentials.Load(), cancellationToken);
+            this.claudeQuotaFallback.RecordQuotaSuccess(DateTimeOffset.UtcNow);
+            return quota;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            // A transient failure must stay a failure: the coordinator then keeps the
+            // last good percentage and the poll schedule backs off instead of hammering
+            // a rate-limited endpoint every minute.
+            if (!this.claudeQuotaFallback.ShouldCountLocalTranscripts(DateTimeOffset.UtcNow))
+            {
+                this.logger?.Log(
+                    DiagnosticLevel.Warning,
+                    "Providers",
+                    $"claude: {exception.Message} Keeping the last quota reading.");
+                throw;
+            }
+
             this.logger?.Log(
                 DiagnosticLevel.Information,
                 "Providers",
