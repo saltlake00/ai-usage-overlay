@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [switch]$AllowUnsignedRelease,
-    [string]$CompilerPath
+    [string]$CompilerPath,
+    [Parameter(Mandatory)][string]$Repository,
+    [switch]$ConfirmPublish
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,8 +18,8 @@ $installationValidator = Join-Path $repositoryRoot 'scripts\Test-WindowsInstalla
 $outDirectory = Join-Path $repositoryRoot 'out'
 $releaseDirectory = Join-Path $outDirectory 'release'
 $logDirectory = Join-Path $outDirectory 'release-logs'
-$installedExecutablePath = Join-Path $env:LOCALAPPDATA 'Programs\CodexHp\CodexHp.exe'
-$requiredRepository = 'netics01/CodexHp'
+$installedExecutablePath = Join-Path $env:LOCALAPPDATA 'Programs\AIUsageOverlay\CodexHp.exe'
+$requiredRepository = $Repository
 $requiredInnoSetupVersion = '6.7.3'
 $minimumGitHubCliVersion = [version]'2.86.0'
 $transcriptStarted = $false
@@ -225,6 +227,10 @@ try {
         throw 'Unsigned publication requires the explicit -AllowUnsignedRelease acknowledgement.'
     }
 
+    if (-not $ConfirmPublish) {
+        throw 'Public publication requires the explicit -ConfirmPublish acknowledgement.'
+    }
+
     $initialStatus = @(& git status --porcelain=v1 --untracked-files=all)
     if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect the Git working tree.' }
     if ($initialStatus.Count -ne 0) {
@@ -310,8 +316,8 @@ try {
         throw "Unable to determine whether GitHub Release '$tag' exists:`n$($releaseView -join "`n")"
     }
 
-    $setupName = "CodexHp-Setup-$version-x64.exe"
-    $portableName = "CodexHp-Portable-$version-x64.exe"
+    $setupName = "AIUsageOverlay-Setup-$version-x64.exe"
+    $portableName = "AIUsageOverlay-Portable-$version-x64.exe"
     $checksumName = 'SHA256SUMS.txt'
     $expectedAssetNames = @($setupName, $portableName, $checksumName)
     $executableNames = @($setupName, $portableName)
@@ -339,7 +345,7 @@ try {
         Assert-VersionMatches $setupVersion $version $setupName
 
         if (-not $tagExists) {
-            Invoke-CheckedCommand git @('tag', '-a', $tag, '-m', "CodexHp $version") "Unable to create tag '$tag'."
+            Invoke-CheckedCommand git @('tag', '-a', $tag, '-m', "AI Usage Overlay $version") "Unable to create tag '$tag'."
         }
         Invoke-CheckedCommand git @('push', 'origin', "refs/tags/$tag") "Unable to push tag '$tag'."
 
@@ -347,10 +353,10 @@ try {
 > [!WARNING]
 > This release is not code-signed. Windows SmartScreen or Smart App Control may warn about or block these files. Download them only from this GitHub Release and verify the SHA-256 checksums.
 
-CodexHp {version} for Windows 11.
+AI Usage Overlay {version} for Windows 11.
 
-- `CodexHp-Setup-{version}-x64.exe` is the recommended per-user installer.
-- `CodexHp-Portable-{version}-x64.exe` is the secondary portable build.
+- `AIUsageOverlay-Setup-{version}-x64.exe` is the recommended per-user installer.
+- `AIUsageOverlay-Portable-{version}-x64.exe` is the secondary portable build.
 - `SHA256SUMS.txt` contains the SHA-256 digest for both executables.
 - This release is not submitted to WinGet.
 '@.Replace('{version}', $version)
@@ -362,7 +368,7 @@ CodexHp {version} for Windows 11.
             --repo $requiredRepository `
             --verify-tag `
             --latest `
-            --title "CodexHp $tag" `
+            --title "AI Usage Overlay $tag" `
             --notes-file $notesPath
         if ($LASTEXITCODE -ne 0) {
             throw "GitHub Release creation failed with exit code $LASTEXITCODE. Re-run this command to verify or resume the release."

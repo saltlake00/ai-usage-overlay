@@ -13,6 +13,8 @@ public sealed class ReleaseConfigurationTests
 
         Assert.False(File.Exists(actionsReleasePath));
         Assert.Contains("[switch]$AllowUnsignedRelease", localRelease, StringComparison.Ordinal);
+        Assert.Contains("[Parameter(Mandatory)][string]$Repository", localRelease, StringComparison.Ordinal);
+        Assert.Contains("[switch]$ConfirmPublish", localRelease, StringComparison.Ordinal);
         Assert.Contains("git status --porcelain=v1 --untracked-files=all", localRelease, StringComparison.Ordinal);
         Assert.Contains("refs/remotes/origin/main", localRelease, StringComparison.Ordinal);
         Assert.Contains("Build-Installer.ps1", localRelease, StringComparison.Ordinal);
@@ -21,8 +23,8 @@ public sealed class ReleaseConfigurationTests
         Assert.Contains("gh release download", localRelease, StringComparison.Ordinal);
         Assert.Contains("Get-FileHash", localRelease, StringComparison.Ordinal);
         Assert.Contains("ProductVersion", localRelease, StringComparison.Ordinal);
-        Assert.Contains("CodexHp-Setup-$version-x64.exe", localRelease, StringComparison.Ordinal);
-        Assert.Contains("CodexHp-Portable-$version-x64.exe", localRelease, StringComparison.Ordinal);
+        Assert.Contains("AIUsageOverlay-Setup-$version-x64.exe", localRelease, StringComparison.Ordinal);
+        Assert.Contains("AIUsageOverlay-Portable-$version-x64.exe", localRelease, StringComparison.Ordinal);
         Assert.Contains("SHA256SUMS.txt", localRelease, StringComparison.Ordinal);
         Assert.Contains("/VERYSILENT", localRelease, StringComparison.Ordinal);
         Assert.DoesNotContain("WINDOWS_SIGNING_CERTIFICATE_BASE64", localRelease, StringComparison.Ordinal);
@@ -38,8 +40,8 @@ public sealed class ReleaseConfigurationTests
         Assert.Contains("\"version\": \"10.0.400\"", sdk, StringComparison.Ordinal);
         Assert.Contains("$requiredInnoSetupVersion = '6.7.3'", localRelease, StringComparison.Ordinal);
         Assert.Contains("$tag = \"v$version\"", localRelease, StringComparison.Ordinal);
-        Assert.Contains("CodexHp-Setup-{version}-x64.exe", localRelease, StringComparison.Ordinal);
-        Assert.Contains("CodexHp-Portable-{version}-x64.exe", localRelease, StringComparison.Ordinal);
+        Assert.Contains("AIUsageOverlay-Setup-{version}-x64.exe", localRelease, StringComparison.Ordinal);
+        Assert.Contains("AIUsageOverlay-Portable-{version}-x64.exe", localRelease, StringComparison.Ordinal);
         Assert.Contains(".Replace('{version}', $version)", localRelease, StringComparison.Ordinal);
     }
 
@@ -76,8 +78,8 @@ public sealed class ReleaseConfigurationTests
         Assert.Contains("if (-not $AllowUnsignedRelease", staging, StringComparison.Ordinal);
         Assert.Contains("Signature status", staging, StringComparison.Ordinal);
         Assert.Contains("Staging an explicitly approved unsigned release", staging, StringComparison.Ordinal);
-        Assert.Contains("CodexHp-Setup-$version-x64.exe", staging, StringComparison.Ordinal);
-        Assert.Contains("CodexHp-Portable-$version-x64.exe", staging, StringComparison.Ordinal);
+        Assert.Contains("AIUsageOverlay-Setup-$version-x64.exe", staging, StringComparison.Ordinal);
+        Assert.Contains("AIUsageOverlay-Portable-$version-x64.exe", staging, StringComparison.Ordinal);
         Assert.Contains("SHA256SUMS.txt", staging, StringComparison.Ordinal);
     }
 

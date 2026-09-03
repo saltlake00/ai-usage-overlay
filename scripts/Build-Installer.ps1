@@ -72,7 +72,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "ISCC.exe failed with exit code $LASTEXITCODE."
 }
 
-$installerPath = Join-Path $outputDirectoryFull "CodexHp-Setup-$version-x64.exe"
+$installerPath = Join-Path $outputDirectoryFull "AIUsageOverlay-Setup-$version-x64.exe"
 if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
     throw "Expected installer was not created: $installerPath"
 }

@@ -9,10 +9,10 @@ public sealed class InstallerConfigurationTests
     {
         var installer = ReadRequiredRepositoryFile("installer", "CodexHp.iss");
 
-        Assert.Contains("AppId={{4B302CDD-065E-4C2F-A0CD-DC430E4B03A8}", installer, StringComparison.Ordinal);
+        Assert.Contains("AppId={{07145274-E70C-4F8C-AA28-51418D59824A}", installer, StringComparison.Ordinal);
         Assert.Contains("PrivilegesRequired=lowest", installer, StringComparison.Ordinal);
-        Assert.Contains(@"DefaultDirName={localappdata}\Programs\CodexHp", installer, StringComparison.Ordinal);
-        Assert.Contains("AppPublisher=netics01", installer, StringComparison.Ordinal);
+        Assert.Contains(@"DefaultDirName={localappdata}\Programs\AIUsageOverlay", installer, StringComparison.Ordinal);
+        Assert.Contains("AppName=AI Usage Overlay", installer, StringComparison.Ordinal);
         Assert.Contains("AppVersion={#AppVersion}", installer, StringComparison.Ordinal);
         Assert.Contains("Flags: uninsdeletevalue uninsdeletekeyifempty", installer, StringComparison.Ordinal);
     }
@@ -25,7 +25,7 @@ public sealed class InstallerConfigurationTests
         Assert.Contains("Name: \"autostart\"", installer, StringComparison.Ordinal);
         Assert.Contains("Flags: checkedonce", installer, StringComparison.Ordinal);
         Assert.Contains("Subkey: \"Software\\Microsoft\\Windows\\CurrentVersion\\Run\"", installer, StringComparison.Ordinal);
-        Assert.Contains("ValueName: \"CodexHp\"", installer, StringComparison.Ordinal);
+        Assert.Contains("ValueName: \"AIUsageOverlay\"", installer, StringComparison.Ordinal);
         Assert.Contains("Tasks: autostart", installer, StringComparison.Ordinal);
         Assert.Contains("Flags: uninsdeletevalue", installer, StringComparison.Ordinal);
     }
@@ -37,7 +37,7 @@ public sealed class InstallerConfigurationTests
         var buildScript = ReadRequiredRepositoryFile("scripts", "Build-Installer.ps1");
 
         Assert.Contains("ArchitecturesAllowed=x64compatible", installer, StringComparison.Ordinal);
-        Assert.Contains("OutputBaseFilename=CodexHp-Setup-{#AppVersion}-x64", installer, StringComparison.Ordinal);
+        Assert.Contains("OutputBaseFilename=AIUsageOverlay-Setup-{#AppVersion}-x64", installer, StringComparison.Ordinal);
         Assert.Contains("skipifsilent", installer, StringComparison.Ordinal);
         Assert.Contains("Verify-Core.ps1", buildScript, StringComparison.Ordinal);
         Assert.Contains("ISCC.exe", buildScript, StringComparison.Ordinal);
@@ -45,7 +45,7 @@ public sealed class InstallerConfigurationTests
         Assert.Contains(".InnerText.Trim()", buildScript, StringComparison.Ordinal);
         Assert.Contains("Installer output directory must stay below", buildScript, StringComparison.Ordinal);
         Assert.Contains("Remove-Item -LiteralPath $outputDirectoryFull -Recurse -Force", buildScript, StringComparison.Ordinal);
-        Assert.Contains("CodexHp-Setup-$version-x64.exe", buildScript, StringComparison.Ordinal);
+        Assert.Contains("AIUsageOverlay-Setup-$version-x64.exe", buildScript, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -11,23 +11,20 @@
 #endif
 
 [Setup]
-AppId={{4B302CDD-065E-4C2F-A0CD-DC430E4B03A8}
-AppName=CodexHp
+AppId={{07145274-E70C-4F8C-AA28-51418D59824A}
+AppName=AI Usage Overlay
 AppVersion={#AppVersion}
-AppVerName=CodexHp {#AppVersion}
-AppPublisher=netics01
-AppPublisherURL=https://github.com/netics01/CodexHp
-AppSupportURL=https://github.com/netics01/CodexHp/issues
-AppUpdatesURL=https://github.com/netics01/CodexHp/releases
-DefaultDirName={localappdata}\Programs\CodexHp
-DefaultGroupName=CodexHp
+AppVerName=AI Usage Overlay {#AppVersion}
+AppPublisher=AI Usage Overlay
+DefaultDirName={localappdata}\Programs\AIUsageOverlay
+DefaultGroupName=AI Usage Overlay
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.22000
 OutputDir={#OutputDirectory}
-OutputBaseFilename=CodexHp-Setup-{#AppVersion}-x64
+OutputBaseFilename=AIUsageOverlay-Setup-{#AppVersion}-x64
 SetupIconFile=..\src\CodexHp.App\Assets\CodexHp.ico
 UninstallDisplayIcon={app}\CodexHp.exe
 Compression=lzma2/max
@@ -36,12 +33,11 @@ WizardStyle=modern
 CloseApplications=yes
 CloseApplicationsFilter=CodexHp.exe
 RestartApplications=no
-AppMutex=Local\CodexHp.SingleInstance
+AppMutex=Local\AIUsageOverlay.SingleInstance
 LicenseFile=..\LICENSE
 VersionInfoVersion={#AppVersion}
-VersionInfoCompany=netics01
-VersionInfoDescription=CodexHp Setup
-VersionInfoProductName=CodexHp
+VersionInfoDescription=AI Usage Overlay Setup
+VersionInfoProductName=AI Usage Overlay
 VersionInfoProductVersion={#AppVersion}
 
 [Languages]
@@ -49,17 +45,17 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 
 [Tasks]
-Name: "autostart"; Description: "Start CodexHp when I sign in to Windows"; Flags: checkedonce
+Name: "autostart"; Description: "Start AI Usage Overlay when I sign in to Windows"; Flags: checkedonce
 
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "CodexHp.exe"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\CodexHp"; Filename: "{app}\CodexHp.exe"; WorkingDir: "{app}"
+Name: "{group}\AI Usage Overlay"; Filename: "{app}\CodexHp.exe"; WorkingDir: "{app}"
 
 [Registry]
-Root: HKCU; Subkey: "Software\netics01\CodexHp"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletevalue uninsdeletekeyifempty
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "CodexHp"; ValueData: """{app}\CodexHp.exe"""; Tasks: autostart; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\AIUsageOverlay"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "AIUsageOverlay"; ValueData: """{app}\CodexHp.exe"""; Tasks: autostart; Flags: uninsdeletevalue
 
 [Run]
-Filename: "{app}\CodexHp.exe"; Description: "Launch CodexHp"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\CodexHp.exe"; Description: "Launch AI Usage Overlay"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent

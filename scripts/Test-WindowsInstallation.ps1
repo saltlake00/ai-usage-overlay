@@ -10,13 +10,13 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 $hkeyUsers = [uint32]2147483651
 $missingRegistryValueReturnCodes = @(1, 2)
 $userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-$installedDirectory = Join-Path $env:LOCALAPPDATA 'Programs\CodexHp'
+$installedDirectory = Join-Path $env:LOCALAPPDATA 'Programs\AIUsageOverlay'
 $installedExecutablePath = Join-Path $installedDirectory 'CodexHp.exe'
-$startMenuShortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\CodexHp\CodexHp.lnk'
+$startMenuShortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\AI Usage Overlay\AI Usage Overlay.lnk'
 $runSubKey = "$userSid\Software\Microsoft\Windows\CurrentVersion\Run"
 $startupApprovedSubKey = "$userSid\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
-$applicationSubKey = "$userSid\Software\netics01\CodexHp"
-$uninstallSubKey = "$userSid\Software\Microsoft\Windows\CurrentVersion\Uninstall\{4B302CDD-065E-4C2F-A0CD-DC430E4B03A8}_is1"
+$applicationSubKey = "$userSid\Software\AIUsageOverlay"
+$uninstallSubKey = "$userSid\Software\Microsoft\Windows\CurrentVersion\Uninstall\{07145274-E70C-4F8C-AA28-51418D59824A}_is1"
 
 function Get-RealRegistryString {
     param(
@@ -87,22 +87,22 @@ if (-not [string]::Equals($installedVersion, $ExpectedVersion, [StringComparison
 }
 
 $expectedRunValue = '"' + $installedExecutablePath + '"'
-$actualRunValue = Get-RealRegistryString $runSubKey 'CodexHp'
+$actualRunValue = Get-RealRegistryString $runSubKey 'AIUsageOverlay'
 if (-not [string]::Equals($actualRunValue, $expectedRunValue, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Real Windows startup path is '$actualRunValue'; expected '$expectedRunValue'."
 }
 
 $actualInstallPath = Get-RealRegistryString $applicationSubKey 'InstallPath'
 if (-not [string]::Equals($actualInstallPath.TrimEnd('\'), $installedDirectory.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Real CodexHp install path is '$actualInstallPath'; expected '$installedDirectory'."
+    throw "Real AIUsageOverlay install path is '$actualInstallPath'; expected '$installedDirectory'."
 }
 
 $actualDisplayName = Get-RealRegistryString $uninstallSubKey 'DisplayName'
-if (-not [string]::Equals($actualDisplayName, "CodexHp $ExpectedVersion", [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Real uninstall registration is '$actualDisplayName'; expected 'CodexHp $ExpectedVersion'."
+if (-not [string]::Equals($actualDisplayName, "AI Usage Overlay $ExpectedVersion", [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Real uninstall registration is '$actualDisplayName'; expected 'AI Usage Overlay $ExpectedVersion'."
 }
 
-$approval = Get-RealRegistryBinary $startupApprovedSubKey 'CodexHp'
+$approval = Get-RealRegistryBinary $startupApprovedSubKey 'AIUsageOverlay'
 $startupEnabled = $null -eq $approval -or ($approval.Length -gt 0 -and $approval[0] -eq 2)
 if ($RequireStartupEnabled -and -not $startupEnabled) {
     $renderedApproval = [BitConverter]::ToString($approval)
@@ -115,13 +115,13 @@ if (-not (Test-RealFileExists $startMenuShortcutPath)) {
 
 $deadline = [DateTimeOffset]::Now.AddSeconds($StartMenuTimeoutSeconds)
 do {
-    $startApp = Get-StartApps | Where-Object { $_.Name -eq 'CodexHp' } | Select-Object -First 1
+    $startApp = Get-StartApps | Where-Object { $_.Name -eq 'AI Usage Overlay' } | Select-Object -First 1
     if ($null -eq $startApp) {
         Start-Sleep -Milliseconds 250
     }
 } while ($null -eq $startApp -and [DateTimeOffset]::Now -lt $deadline)
 if ($null -eq $startApp) {
-    throw 'Windows Start menu does not expose CodexHp.'
+    throw 'Windows Start menu does not expose AI Usage Overlay.'
 }
 
 [pscustomobject]@{
