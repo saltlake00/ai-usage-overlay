@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using CodexHp.App.Accounts;
 using CodexHp.Core.Domain;
 
 namespace CodexHp.App.Infrastructure.Ollama;
@@ -36,7 +37,10 @@ internal sealed partial class OllamaUsageClient
         if (string.IsNullOrWhiteSpace(credentials.CookieHeader))
         {
             throw new OllamaUsageException(
-                "Ollama Cloud is not configured. Set OLLAMA_API_KEY (from ollama.com/settings/keys) to show quota windows.");
+                "Ollama Cloud is not configured. Set OLLAMA_API_KEY (from ollama.com/settings/keys) to show quota windows.")
+            {
+                Kind = ProviderErrorKind.UnsupportedFormat,
+            };
         }
 
         using var request = new HttpRequestMessage(HttpMethod.Get, SettingsUri);
@@ -49,7 +53,10 @@ internal sealed partial class OllamaUsageClient
         if (IsAuthenticationFailure(response))
         {
             this.invalidateSession();
-            throw new OllamaUsageException("Ollama Cloud authentication failed. Sign in again or update the session cookie.");
+            throw new OllamaUsageException("Ollama Cloud authentication failed. Sign in again or update the session cookie.")
+            {
+                Kind = ProviderErrorKind.Authentication,
+            };
         }
 
         if (!response.IsSuccessStatusCode)
@@ -62,7 +69,10 @@ internal sealed partial class OllamaUsageClient
             && !html.Contains("Session usage", StringComparison.OrdinalIgnoreCase))
         {
             this.invalidateSession();
-            throw new OllamaUsageException("Ollama Cloud authentication failed. Sign in again or update the session cookie.");
+            throw new OllamaUsageException("Ollama Cloud authentication failed. Sign in again or update the session cookie.")
+            {
+                Kind = ProviderErrorKind.Authentication,
+            };
         }
 
         return ParseUsageHtml(html);
@@ -81,7 +91,10 @@ internal sealed partial class OllamaUsageClient
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
             this.invalidateSession();
-            throw new OllamaUsageException("Ollama API key was rejected. Create a new key at ollama.com/settings/keys.");
+            throw new OllamaUsageException("Ollama API key was rejected. Create a new key at ollama.com/settings/keys.")
+            {
+                Kind = ProviderErrorKind.Authentication,
+            };
         }
 
         if (!response.IsSuccessStatusCode)

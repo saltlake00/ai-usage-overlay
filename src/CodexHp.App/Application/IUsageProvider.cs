@@ -1,3 +1,4 @@
+using CodexHp.App.Accounts;
 using CodexHp.Core.Domain;
 
 namespace CodexHp.App.Application;
@@ -23,7 +24,8 @@ internal sealed record ProviderUsageState(
     string Id,
     ProviderAvailability Availability,
     ProviderUsageSnapshot? LastSuccessful,
-    string? Error);
+    string? Error,
+    ProviderErrorKind ErrorKind = ProviderErrorKind.Other);
 
 // Marks an exception whose message was authored for the user and is known not to
 // carry a token or cookie. Only these messages survive into ProviderUsageState.Error;

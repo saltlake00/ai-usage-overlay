@@ -22,7 +22,8 @@ public sealed class WindowsTrayIconView : ITrayIconView
     private const uint RefreshCommandId = 1;
     private const uint TogglePositionLockCommandId = 2;
     private const uint OptionsCommandId = 3;
-    private const uint ExitCommandId = 4;
+    private const uint AccountsCommandId = 4;
+    private const uint ExitCommandId = 5;
     private const uint WindowMessageNull = 0x0000;
     private readonly System.Drawing.Icon icon;
     private readonly HwndSource messageSource;
@@ -202,6 +203,7 @@ public sealed class WindowsTrayIconView : ITrayIconView
                     TrayMenuCommand.Refresh => RefreshCommandId,
                     TrayMenuCommand.TogglePositionLock => TogglePositionLockCommandId,
                     TrayMenuCommand.Options => OptionsCommandId,
+                    TrayMenuCommand.Accounts => AccountsCommandId,
                     TrayMenuCommand.Exit => ExitCommandId,
                     _ => 0u,
                 };

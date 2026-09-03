@@ -12,6 +12,7 @@ public enum TrayMenuCommand
     Refresh,
     TogglePositionLock,
     Options,
+    Accounts,
     Exit,
 }
 
@@ -29,7 +30,8 @@ internal static class TrayIconMessageRouter
     private const uint RefreshCommandId = 1;
     private const uint TogglePositionLockCommandId = 2;
     private const uint OptionsCommandId = 3;
-    private const uint ExitCommandId = 4;
+    private const uint AccountsCommandId = 4;
+    private const uint ExitCommandId = 5;
 
     public static TrayMouseButton RouteMouseButton(uint nativeMessage) => nativeMessage switch
     {
@@ -43,6 +45,7 @@ internal static class TrayIconMessageRouter
         RefreshCommandId => TrayMenuCommand.Refresh,
         TogglePositionLockCommandId => TrayMenuCommand.TogglePositionLock,
         OptionsCommandId => TrayMenuCommand.Options,
+        AccountsCommandId => TrayMenuCommand.Accounts,
         ExitCommandId => TrayMenuCommand.Exit,
         _ => null,
     };
@@ -70,6 +73,7 @@ public sealed class TrayIconController : IDisposable
         new TrayMenuItem(TrayMenuCommand.Refresh, "Refresh now"),
         new TrayMenuItem(TrayMenuCommand.TogglePositionLock, "Unlock position"),
         new TrayMenuItem(TrayMenuCommand.Options, "Options"),
+        new TrayMenuItem(TrayMenuCommand.Accounts, "계정 연동"),
         new TrayMenuItem(TrayMenuCommand.Exit, "Exit"),
     ];
 
@@ -78,10 +82,11 @@ public sealed class TrayIconController : IDisposable
     private readonly Action exit;
     private readonly Action refresh;
     private readonly Action togglePositionLock;
+    private readonly Action openAccounts;
     private bool disposed;
 
     public TrayIconController(Action openOptions, Action exit)
-        : this(new WindowsTrayIconView(), openOptions, exit, () => { }, () => { })
+        : this(new WindowsTrayIconView(), openOptions, exit, () => { }, () => { }, () => { })
     {
     }
 
@@ -90,12 +95,22 @@ public sealed class TrayIconController : IDisposable
         Action exit,
         Action refresh,
         Action togglePositionLock)
-        : this(new WindowsTrayIconView(), openOptions, exit, refresh, togglePositionLock)
+        : this(new WindowsTrayIconView(), openOptions, exit, refresh, togglePositionLock, () => { })
+    {
+    }
+
+    public TrayIconController(
+        Action openOptions,
+        Action exit,
+        Action refresh,
+        Action togglePositionLock,
+        Action openAccounts)
+        : this(new WindowsTrayIconView(), openOptions, exit, refresh, togglePositionLock, openAccounts)
     {
     }
 
     public TrayIconController(ITrayIconView view, Action openOptions, Action exit)
-        : this(view, openOptions, exit, () => { }, () => { })
+        : this(view, openOptions, exit, () => { }, () => { }, () => { })
     {
     }
 
@@ -105,12 +120,24 @@ public sealed class TrayIconController : IDisposable
         Action exit,
         Action refresh,
         Action togglePositionLock)
+        : this(view, openOptions, exit, refresh, togglePositionLock, () => { })
+    {
+    }
+
+    public TrayIconController(
+        ITrayIconView view,
+        Action openOptions,
+        Action exit,
+        Action refresh,
+        Action togglePositionLock,
+        Action openAccounts)
     {
         this.view = view ?? throw new ArgumentNullException(nameof(view));
         this.openOptions = openOptions ?? throw new ArgumentNullException(nameof(openOptions));
         this.exit = exit ?? throw new ArgumentNullException(nameof(exit));
         this.refresh = refresh ?? throw new ArgumentNullException(nameof(refresh));
         this.togglePositionLock = togglePositionLock ?? throw new ArgumentNullException(nameof(togglePositionLock));
+        this.openAccounts = openAccounts ?? throw new ArgumentNullException(nameof(openAccounts));
         this.view.MouseClicked += this.OnMouseClicked;
         this.view.MenuCommandInvoked += this.OnMenuCommandInvoked;
         this.view.Visible = true;
@@ -150,6 +177,9 @@ public sealed class TrayIconController : IDisposable
                 break;
             case TrayMenuCommand.Options:
                 this.openOptions();
+                break;
+            case TrayMenuCommand.Accounts:
+                this.openAccounts();
                 break;
             case TrayMenuCommand.Exit:
                 this.exit();

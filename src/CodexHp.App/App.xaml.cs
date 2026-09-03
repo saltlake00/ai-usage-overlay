@@ -1,9 +1,12 @@
-﻿using System.Net.Http;
+﻿using System.IO;
+using System.Net.Http;
+using CodexHp.App.Accounts;
 using CodexHp.App.Application;
 using CodexHp.App.Infrastructure;
 using CodexHp.App.Infrastructure.Claude;
 using CodexHp.App.Infrastructure.Ollama;
 using CodexHp.App.Presentation;
+using CodexHp.App.Presentation.Accounts;
 using CodexHp.App.Presentation.Settings;
 using CodexHp.Core.Domain;
 using CodexHp.Core.Positioning;
@@ -25,6 +28,7 @@ public partial class App : System.Windows.Application
     private UsageOverlayWindow? usageOverlayWindow;
     private SettingsWindow? settingsWindow;
     private UsageDetailsWindow? usageDetailsWindow;
+    private AccountsWindow? accountsWindow;
     private SettingsWindowController? settingsWindowController;
     private OverlayPositionController? positionController;
     private DisplayEnvironmentWatcher? displayEnvironmentWatcher;
@@ -50,6 +54,7 @@ public partial class App : System.Windows.Application
     private readonly SemaphoreSlim claudeRefreshSignal = new(0, 1);
     private readonly SemaphoreSlim ollamaRefreshSignal = new(0, 1);
     private readonly SemaphoreSlim usageCacheGate = new(1, 1);
+    private AccountConnectionService? accountConnectionService;
 
     protected override void OnStartup(System.Windows.StartupEventArgs eventArgs)
     {
@@ -142,7 +147,8 @@ public partial class App : System.Windows.Application
             this.OpenSettings,
             this.BeginShutdown,
             this.RequestProviderRefresh,
-            this.ToggleOverlayPositionLock);
+            this.ToggleOverlayPositionLock,
+            this.OpenAccounts);
         this.httpClient = new HttpClient
         {
             Timeout = TimeSpan.FromSeconds(10),
@@ -180,38 +186,77 @@ public partial class App : System.Windows.Application
         var claudeLocalUsage = new ClaudeLocalUsageSource();
         var ollamaCredentials = new OllamaCredentialSource();
         var ollamaClient = new OllamaUsageClient(this.ollamaHttpClient);
-        var secondaryCoordinator = new MultiProviderCoordinator(
-        [
-            new DelegateUsageProvider(
-                "claude",
-                cancellationToken => this.FetchClaudeUsageAsync(
+
+        // 계정 연동 서비스: 사용자가 앱 UI에서 등록한 비밀(DPAPI 암호화)을 읽어 조회한다.
+        // Codex는 기존 auth.json을 그대로 읽고, Claude는 OAuth 토큰, Ollama는 API 키를
+        // 앱 UI에서 등록한다. 등록하지 않은 공급자는 조회하지 않는다.
+        var credentialsDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AIUsageOverlay",
+            "credentials");
+        var accountConnectionService = new AccountConnectionService(
+            new DpapiAccountSecretStore(credentialsDirectory),
+            new AccountConnectionStore(Path.Combine(credentialsDirectory, "state.json")),
+            fetch: (providerId, secret, ct) => providerId switch
+            {
+                "claude" => this.FetchClaudeUsageAsync(
                     claudeCredentials,
                     claudeClient,
                     claudeLocalUsage,
-                    cancellationToken)),
-            new DelegateUsageProvider("ollama", cancellationToken =>
-                ollamaClient.FetchAsync(ollamaCredentials.Load(), cancellationToken)),
-        ]);
+                    secret,
+                    ct),
+                "ollama" => ollamaClient.FetchAsync(
+                    new OllamaCredentials(null, secret),
+                    ct),
+                _ => throw new ArgumentOutOfRangeException(nameof(providerId)),
+            },
+            classify: ClassifyProviderError);
+        this.accountConnectionService = accountConnectionService;
         var usageCache = new ProviderUsageCache();
         this.secondaryProvidersTask = Task.WhenAll(
             this.RunSecondaryProviderAsync(
                 "claude",
-                secondaryCoordinator,
+                accountConnectionService,
                 usageCache,
                 this.claudeRefreshSignal,
                 this.lifetimeCancellation.Token),
             this.RunSecondaryProviderAsync(
                 "ollama",
-                secondaryCoordinator,
+                accountConnectionService,
                 usageCache,
                 this.ollamaRefreshSignal,
                 this.lifetimeCancellation.Token));
         this.logger.Log(DiagnosticLevel.Information, "Lifecycle", "AI Usage Overlay started.");
     }
 
+    private static ConnectionStatus ClassifyProviderError(Exception exception) => exception switch
+    {
+        UsageProviderException provider => provider.Kind switch
+        {
+            ProviderErrorKind.Authentication => ConnectionStatus.ReconnectRequired,
+            ProviderErrorKind.AccessDenied => ConnectionStatus.ReconnectRequired,
+            ProviderErrorKind.RateLimited => ConnectionStatus.TransientError,
+            ProviderErrorKind.Network => ConnectionStatus.TransientError,
+            ProviderErrorKind.UnsupportedFormat => ConnectionStatus.Unsupported,
+            _ => ConnectionStatus.TransientError,
+        },
+        OllamaUsageException ollama => ollama.Kind switch
+        {
+            ProviderErrorKind.Authentication => ConnectionStatus.ReconnectRequired,
+            ProviderErrorKind.AccessDenied => ConnectionStatus.ReconnectRequired,
+            ProviderErrorKind.RateLimited => ConnectionStatus.TransientError,
+            ProviderErrorKind.Network => ConnectionStatus.TransientError,
+            ProviderErrorKind.UnsupportedFormat => ConnectionStatus.Unsupported,
+            _ => ConnectionStatus.TransientError,
+        },
+        HttpRequestException => ConnectionStatus.TransientError,
+        TaskCanceledException => ConnectionStatus.TransientError,
+        _ => ConnectionStatus.TransientError,
+    };
+
     private async Task RunSecondaryProviderAsync(
         string providerId,
-        MultiProviderCoordinator coordinator,
+        AccountConnectionService accountConnectionService,
         ProviderUsageCache cache,
         SemaphoreSlim refreshSignal,
         CancellationToken cancellationToken)
@@ -241,27 +286,18 @@ public partial class App : System.Windows.Application
 
             while (true)
             {
-                var state = await coordinator.RefreshOneAsync(providerId, cancellationToken);
-                if (state.Availability == ProviderAvailability.Failed)
-                {
-                    this.logger?.Log(
-                        DiagnosticLevel.Warning,
-                        "Providers",
-                        $"{providerId}: {state.Error}");
-                }
-
-                var states = coordinator.CurrentStates;
-                var snapshots = states
-                    .Select(state => state.LastSuccessful)
-                    .Where(snapshot => snapshot is not null)
-                    .Cast<ProviderUsageSnapshot>()
-                    .ToArray();
-                if (snapshots.Length > 0)
+                var (success, snapshot, generation) = await accountConnectionService.FetchAsync(providerId, cancellationToken);
+                if (success && snapshot is not null)
                 {
                     await this.usageCacheGate.WaitAsync(cancellationToken);
                     try
                     {
-                        await cache.SaveAsync(snapshots, cancellationToken);
+                        // 캐시 쓰기 직전에도 세대를 검사한다.
+                        var current = accountConnectionService.GetState(providerId);
+                        if (current.Generation == generation)
+                        {
+                            await cache.SaveAsync([snapshot], cancellationToken);
+                        }
                     }
                     catch (Exception exception) when (exception is not OperationCanceledException)
                     {
@@ -273,11 +309,16 @@ public partial class App : System.Windows.Application
                     }
                 }
 
-                this.secondaryProviderRows = states.Select(ToProviderRow).ToArray();
+                var state = accountConnectionService.GetState(providerId);
+                this.secondaryProviderRows = this.secondaryProviderRows
+                    .Select(row => row.Id.Equals(providerId, StringComparison.OrdinalIgnoreCase)
+                        ? ToProviderRow(providerId, state, snapshot)
+                        : row)
+                    .ToArray();
                 _ = this.Dispatcher.BeginInvoke(this.ApplyCurrentProviderRows);
-                var outcome = state.Availability == ProviderAvailability.Failed
-                    ? PollOutcome.Failure
-                    : PollOutcome.Success;
+                var outcome = state.Status == ConnectionStatus.Connected
+                    ? PollOutcome.Success
+                    : PollOutcome.Failure;
                 var hidden = !this.currentUsageOverlayState.IsVisible;
                 _ = await refreshSignal.WaitAsync(
                     schedule.NextDelay(outcome, hidden),
@@ -293,32 +334,43 @@ public partial class App : System.Windows.Application
         }
     }
 
-    private static ProviderUsageRowState ToProviderRow(ProviderUsageState state)
+    private static ProviderUsageRowState ToProviderRow(
+        string providerId,
+        AccountConnectionState state,
+        ProviderUsageSnapshot? snapshot)
     {
-        var snapshot = state.LastSuccessful;
-        return snapshot is null
-            ? new ProviderUsageRowState(
-                state.Id,
-                DisplayName(state.Id),
+        if (snapshot is null)
+        {
+            return new ProviderUsageRowState(
+                providerId,
+                DisplayName(providerId),
                 null,
                 null,
                 true,
-                ShortWindowLabel: ShortWindowLabelFor(state.Id))
-            : ToProviderRow(snapshot, state.Availability != ProviderAvailability.Current);
+                ShortWindowLabel: ShortWindowLabelFor(providerId));
+        }
+
+        return ToProviderRow(snapshot, state.Status != ConnectionStatus.Connected);
     }
 
     // The quota endpoint needs an unexpired Claude Code token, which is often not
     // what sits on disk. Claude Code's own transcripts are always there, so a
     // failed quota read degrades to counting them rather than to a blank row.
+    // When the user registered a token in the account screen, it takes precedence
+    // over the on-disk credential file.
     private async Task<ProviderUsageSnapshot> FetchClaudeUsageAsync(
         ClaudeCredentialSource credentials,
         ClaudeUsageClient client,
         ClaudeLocalUsageSource localUsage,
+        string? registeredToken,
         CancellationToken cancellationToken)
     {
         try
         {
-            var quota = await client.FetchAsync(credentials.Load(), cancellationToken);
+            var claudeCredentials = string.IsNullOrWhiteSpace(registeredToken)
+                ? credentials.Load()
+                : new ClaudeCredentials(registeredToken.Trim());
+            var quota = await client.FetchAsync(claudeCredentials, cancellationToken);
             this.claudeQuotaFallback.RecordQuotaSuccess(DateTimeOffset.UtcNow);
             return quota;
         }
@@ -522,6 +574,30 @@ public partial class App : System.Windows.Application
         }
 
         this.settingsWindowController?.Open();
+    }
+
+    private void OpenAccounts()
+    {
+        if (!this.Dispatcher.CheckAccess())
+        {
+            this.Dispatcher.BeginInvoke(this.OpenAccounts);
+            return;
+        }
+
+        if (this.accountConnectionService is null)
+        {
+            return;
+        }
+
+        if (this.accountsWindow is null)
+        {
+            var viewModel = new AccountsViewModel(this.accountConnectionService);
+            this.accountsWindow = new AccountsWindow(viewModel, this.accountConnectionService);
+            this.accountsWindow.Closed += (_, _) => this.accountsWindow = null;
+        }
+
+        this.accountsWindow.Show();
+        this.accountsWindow.Activate();
     }
 
     private void OpenProviderDetails(string? providerId)

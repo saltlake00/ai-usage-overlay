@@ -1,4 +1,5 @@
-﻿using CodexHp.App.Application;
+﻿using CodexHp.App.Accounts;
+using CodexHp.App.Application;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -9,7 +10,10 @@ using CodexHp.Core.Domain;
 namespace CodexHp.App.Infrastructure.Claude;
 
 internal sealed class UsageProviderException(string message, Exception? innerException = null)
-    : Exception(message, innerException), IActionableProviderError;
+    : Exception(message, innerException), IActionableProviderError
+{
+    public ProviderErrorKind Kind { get; init; } = ProviderErrorKind.Other;
+}
 
 // Reads the same quota the `claude` CLI reports, via the OAuth usage endpoint that
 // Claude Code itself authenticates against. The earlier implementation scraped
@@ -51,12 +55,18 @@ internal sealed class ClaudeUsageClient(HttpClient httpClient)
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
             throw new UsageProviderException(
-                "Claude Code authentication was rejected. Run `claude` to sign in again.");
+                "Claude Code authentication was rejected. Run `claude` to sign in again.")
+            {
+                Kind = ProviderErrorKind.Authentication,
+            };
         }
 
         if (response.StatusCode is HttpStatusCode.TooManyRequests)
         {
-            throw new UsageProviderException("Claude usage endpoint is rate limited. It will retry on the next poll.");
+            throw new UsageProviderException("Claude usage endpoint is rate limited. It will retry on the next poll.")
+            {
+                Kind = ProviderErrorKind.RateLimited,
+            };
         }
 
         if (!response.IsSuccessStatusCode)
@@ -72,7 +82,10 @@ internal sealed class ClaudeUsageClient(HttpClient httpClient)
         }
         catch (JsonException exception)
         {
-            throw new UsageProviderException("Claude usage response format changed.", exception);
+            throw new UsageProviderException("Claude usage response format changed.", exception)
+            {
+                Kind = ProviderErrorKind.UnsupportedFormat,
+            };
         }
     }
 

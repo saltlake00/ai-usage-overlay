@@ -22,7 +22,8 @@ public sealed class TrayIconControllerTests
     [InlineData(1u, TrayMenuCommand.Refresh)]
     [InlineData(2u, TrayMenuCommand.TogglePositionLock)]
     [InlineData(3u, TrayMenuCommand.Options)]
-    [InlineData(4u, TrayMenuCommand.Exit)]
+    [InlineData(4u, TrayMenuCommand.Accounts)]
+    [InlineData(5u, TrayMenuCommand.Exit)]
     public void Native_menu_command_ids_route_in_display_order(
         uint nativeCommand,
         TrayMenuCommand expected)
@@ -80,6 +81,7 @@ public sealed class TrayIconControllerTests
                 new TrayMenuItem(TrayMenuCommand.Refresh, "Refresh now"),
                 new TrayMenuItem(TrayMenuCommand.TogglePositionLock, "Unlock position"),
                 new TrayMenuItem(TrayMenuCommand.Options, "Options"),
+                new TrayMenuItem(TrayMenuCommand.Accounts, "계정 연동"),
                 new TrayMenuItem(TrayMenuCommand.Exit, "Exit"),
             ],
             view.MenuItems);
@@ -108,6 +110,7 @@ public sealed class TrayIconControllerTests
                 new TrayMenuItem(TrayMenuCommand.Refresh, "Refresh now"),
                 new TrayMenuItem(TrayMenuCommand.TogglePositionLock, "Unlock position"),
                 new TrayMenuItem(TrayMenuCommand.Options, "Options"),
+                new TrayMenuItem(TrayMenuCommand.Accounts, "계정 연동"),
                 new TrayMenuItem(TrayMenuCommand.Exit, "Exit"),
             ],
             view.MenuItems);

@@ -1,4 +1,8 @@
-﻿using CodexHp.Core.Domain;
+﻿using System.Net.Http;
+using CodexHp.App.Accounts;
+using CodexHp.App.Infrastructure.Claude;
+using CodexHp.App.Infrastructure.Ollama;
+using CodexHp.Core.Domain;
 
 namespace CodexHp.App.Application;
 
@@ -13,7 +17,7 @@ internal sealed class MultiProviderCoordinator
         this.providers = providers ?? throw new ArgumentNullException(nameof(providers));
         this.states = providers.ToDictionary(
             provider => provider.Id,
-            provider => new ProviderUsageState(provider.Id, ProviderAvailability.Waiting, null, null),
+            provider => new ProviderUsageState(provider.Id, ProviderAvailability.Waiting, null, null, ProviderErrorKind.Other),
             StringComparer.OrdinalIgnoreCase);
     }
 
@@ -66,7 +70,7 @@ internal sealed class MultiProviderCoordinator
         try
         {
             var snapshot = await provider.FetchAsync(cancellationToken);
-            return new ProviderUsageState(provider.Id, ProviderAvailability.Current, snapshot, null);
+            return new ProviderUsageState(provider.Id, ProviderAvailability.Current, snapshot, null, ProviderErrorKind.Other);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -94,7 +98,17 @@ internal sealed class MultiProviderCoordinator
                 previous.LastSuccessful,
                 exception is IActionableProviderError && !string.IsNullOrWhiteSpace(exception.Message)
                     ? exception.Message
-                    : $"Usage unavailable ({exception.GetType().Name})");
+                    : $"Usage unavailable ({exception.GetType().Name})",
+                Classify(exception));
         }
     }
+
+    private static ProviderErrorKind Classify(Exception exception) => exception switch
+    {
+        UsageProviderException provider when provider.Kind != ProviderErrorKind.Other => provider.Kind,
+        OllamaUsageException ollama when ollama.Kind != ProviderErrorKind.Other => ollama.Kind,
+        HttpRequestException => ProviderErrorKind.Network,
+        TaskCanceledException => ProviderErrorKind.Network,
+        _ => ProviderErrorKind.Other,
+    };
 }
