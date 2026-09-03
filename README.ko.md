@@ -32,9 +32,27 @@ Codex 인증은 기존 로컬 Codex 설정을 사용합니다. Claude는 Claude 
 
 세션 쿠키와 API 키는 비밀번호와 같은 비밀 정보입니다. 공유하거나 저장소에 커밋하지 마세요.
 
+## 계정 연동
+
+트레이 아이콘 우클릭 → **계정 연동**에서 각 공급자의 연결 상태를 확인하고, Claude OAuth 토큰·Ollama API 키를 앱 UI에서 등록할 수 있습니다. 등록한 비밀은 `%LOCALAPPDATA%\AIUsageOverlay\credentials`에 **DPAPI(현재 Windows 사용자)로 암호화**되어 저장되며, 같은 PC의 다른 Windows 사용자는 읽을 수 없습니다.
+
+- **Codex**: 기존 `~/.codex/auth.json`을 그대로 읽습니다(이 PC의 Codex 연결). 별도 등록이 필요 없습니다.
+- **Claude**: Claude Code가 저장한 로그인을 읽기 전용으로 사용합니다. 앱 UI에서 OAuth 토큰을 직접 등록할 수도 있습니다.
+- **Ollama Cloud**: API 키를 앱 UI에서 등록하거나, 위 환경 변수를 사용합니다.
+
+연결 해제는 앱의 조회만 중단하며, Codex·Claude 자체를 로그아웃시키지 않습니다.
+
 ## 저비용 설정
 
 보일 때 60초, 숨겨졌을 때 180초 간격으로 조회합니다. 오류 시 최대 900초까지 지수 백오프하며, 상세 창은 네트워크를 다시 조회하지 않습니다.
+
+## 배포
+
+- 지원 OS: Windows 11 x64
+- 공급자별 검증 상태: Codex 지원, Claude·Ollama Cloud는 기술 사용자용 베타(수동 등록)
+- 로컬 저장 위치: `%LOCALAPPDATA%\AIUsageOverlay\credentials` (DPAPI CurrentUser 암호화)
+- 삭제 방법: 설치 프로그램의 '로컬 데이터 삭제' 선택
+- 비공개 응답 변경 위험: Claude·Ollama의 비공개 응답 형식이 바뀌면 파서가 깨질 수 있음
 
 ## 빌드
 
