@@ -300,6 +300,38 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     internal static extern int FillRect(nint deviceContext, ref NativeRect rectangle, nint brush);
 
+    internal const uint GradientFillRectV = 0x00000001;
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct TriVertex
+    {
+        internal int X;
+        internal int Y;
+        internal ushort Red;
+        internal ushort Green;
+        internal ushort Blue;
+        internal ushort Alpha;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GradientRect
+    {
+        internal uint UpperLeft;
+        internal uint LowerRight;
+    }
+
+    // One native call fills the whole rectangle - same cost class as FillRect,
+    // no per-pixel work on the managed side.
+    [DllImport("msimg32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GradientFill(
+        nint deviceContext,
+        [In] TriVertex[] vertices,
+        uint verticesCount,
+        [In] GradientRect[] mesh,
+        uint meshCount,
+        uint mode);
+
     [DllImport("gdi32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool DeleteObject(nint graphicObject);

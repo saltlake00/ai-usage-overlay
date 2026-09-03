@@ -229,10 +229,14 @@ public static class UsageOverlayRenderer
         // and allowed to spill past the bitmap.
         var showName = usable >= 22;
         var showWeekly = usable >= 40;
-        var barHeight = usable >= 52 ? 2 : 0;
+        var shortBarHeight = usable >= 52 ? 2 : 0;
+        // The weekly bar rides on the same room budget as the short bar - if
+        // there is space for one mini-bar there is space for two, since both
+        // come out of the value row's slack rather than a separate threshold.
+        var weeklyBarHeight = showWeekly && shortBarHeight > 0 ? 2 : 0;
         var nameHeight = showName ? Math.Max(9, usable * 22 / 100) : 0;
         var weeklyHeight = showWeekly ? Math.Max(11, usable * 26 / 100) : 0;
-        var valueHeight = Math.Max(9, usable - nameHeight - weeklyHeight - barHeight);
+        var valueHeight = Math.Max(9, usable - nameHeight - weeklyHeight - shortBarHeight - weeklyBarHeight);
         var nameFont = Math.Clamp(nameHeight - 2, 7, 13);
         var valueFont = Math.Clamp(valueHeight - 3, 10, 26);
         var weeklyFont = Math.Clamp(weeklyHeight - 2, 8, 15);
@@ -271,9 +275,9 @@ public static class UsageOverlayRenderer
 
             // The bar only appears when a quota exists to fill it; a token count has
             // no denominator and a full-width track would imply one.
-            if (barHeight > 0)
+            if (shortBarHeight > 0)
             {
-                var barBounds = new LayoutRect(left, top, columnWidth, barHeight);
+                var barBounds = new LayoutRect(left, top, columnWidth, shortBarHeight);
                 commands.Add(Rectangle(OverlayElementRole.ProviderShortTrack, barBounds, GaugeTrackColor, opacity));
                 if (row.ShortRemainingPercent is { } remaining)
                 {
@@ -284,7 +288,7 @@ public static class UsageOverlayRenderer
                         opacity));
                 }
 
-                top += barHeight;
+                top += shortBarHeight;
             }
 
             if (showWeekly)
@@ -300,6 +304,24 @@ public static class UsageOverlayRenderer
                     opacity,
                     $"{row.WeeklyWindowLabel} {FormatMeasure(row.WeeklyRemainingPercent, row.WeeklyTokens)}",
                     weeklyFont));
+                top += weeklyHeight;
+
+                // Same rule as the short bar: no percent, no bar. A token-count
+                // fallback (Claude with an expired quota session, for example)
+                // has no ceiling to draw a fraction of.
+                if (weeklyBarHeight > 0)
+                {
+                    var weeklyBarBounds = new LayoutRect(left, top, columnWidth, weeklyBarHeight);
+                    commands.Add(Rectangle(OverlayElementRole.ProviderWeeklyTrack, weeklyBarBounds, GaugeTrackColor, opacity));
+                    if (row.WeeklyRemainingPercent is { } weeklyRemaining)
+                    {
+                        commands.Add(Rectangle(
+                            OverlayElementRole.ProviderWeeklyFill,
+                            weeklyBarBounds with { Width = Math.Max(1, columnWidth * Math.Clamp(weeklyRemaining, 0, 100) / 100) },
+                            RiskColor(weeklyRemaining),
+                            opacity));
+                    }
+                }
             }
         }
     }
