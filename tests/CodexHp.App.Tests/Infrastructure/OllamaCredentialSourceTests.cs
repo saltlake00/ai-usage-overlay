@@ -28,6 +28,6 @@ public sealed class OllamaCredentialSourceTests
 
         var error = Assert.Throws<OllamaUsageException>(() => source.Load());
 
-        Assert.Contains("OLLAMA_SESSION_COOKIE", error.Message);
+        Assert.Contains("OLLAMA_API_KEY", error.Message);
     }
 }

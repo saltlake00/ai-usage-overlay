@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using CodexHp.Core.Domain;
 
@@ -8,6 +10,8 @@ namespace CodexHp.App.Infrastructure.Ollama;
 internal sealed partial class OllamaUsageClient
 {
     private static readonly Uri SettingsUri = new("https://ollama.com/settings");
+    private static readonly Uri UsageApiUri = new("https://ollama.com/api/usage");
+    private static readonly TimeSpan Week = TimeSpan.FromDays(7);
     private readonly HttpClient httpClient;
     private readonly Action invalidateSession;
 
@@ -21,10 +25,18 @@ internal sealed partial class OllamaUsageClient
         OllamaCredentials credentials,
         CancellationToken cancellationToken = default)
     {
+        // An API key hits the official JSON endpoint - no cookie rotation, no
+        // HTML to parse, no relative-redirect edge case. Prefer it whenever one
+        // is configured; the cookie scrape below only runs without one.
+        if (!string.IsNullOrWhiteSpace(credentials.ApiKey))
+        {
+            return await this.FetchViaApiAsync(credentials.ApiKey, cancellationToken);
+        }
+
         if (string.IsNullOrWhiteSpace(credentials.CookieHeader))
         {
             throw new OllamaUsageException(
-                "An Ollama API key validates Cloud access but does not expose Cloud quota windows. Configure OLLAMA_SESSION_COOKIE.");
+                "Ollama Cloud is not configured. Set OLLAMA_API_KEY (from ollama.com/settings/keys) to show quota windows.");
         }
 
         using var request = new HttpRequestMessage(HttpMethod.Get, SettingsUri);
@@ -54,6 +66,103 @@ internal sealed partial class OllamaUsageClient
         }
 
         return ParseUsageHtml(html);
+    }
+
+    // Official endpoint - GET https://ollama.com/api/usage, Authorization: Bearer
+    // {key}. Confirmed against the response shape used by community Ollama Cloud
+    // usage tools (e.g. mpartipilo/ollama-cloud-usage); no session cookie or HTML
+    // scraping involved.
+    private async Task<ProviderUsageSnapshot> FetchViaApiAsync(string apiKey, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, UsageApiUri);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        using var response = await this.httpClient.SendAsync(request, cancellationToken);
+
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            this.invalidateSession();
+            throw new OllamaUsageException("Ollama API key was rejected. Create a new key at ollama.com/settings/keys.");
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new OllamaUsageException($"Ollama usage API request failed with status {(int)response.StatusCode}.");
+        }
+
+        using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        JsonDocument document;
+        try
+        {
+            document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        }
+        catch (JsonException exception)
+        {
+            throw new OllamaUsageException("Ollama usage API returned invalid JSON.", exception);
+        }
+
+        using (document)
+        {
+            return ParseUsageJson(document.RootElement);
+        }
+    }
+
+    // The API returns usage as a used-fraction (0..1), not a remaining percent,
+    // and exposes no reset timestamp for either window. The weekly window's
+    // billing-period start is derivable (a weekday 00:00 UTC boundary that
+    // repeats every 7 days), so the next reset is stepped forward from it. The
+    // session window is a rolling 5h block with no anchor in the response, so
+    // its reset is left null rather than guessed.
+    internal static ProviderUsageSnapshot ParseUsageJson(JsonElement root)
+    {
+        if (!root.TryGetProperty("limits", out var limits))
+        {
+            throw new OllamaUsageException("Ollama usage API response did not include quota limits.");
+        }
+
+        var sessionUsed = ReadUsageFraction(limits, "session");
+        var weeklyUsed = ReadUsageFraction(limits, "weekly");
+        if (sessionUsed is null || weeklyUsed is null)
+        {
+            throw new OllamaUsageException("Ollama usage API response did not expose both Cloud quota windows.");
+        }
+
+        return new ProviderUsageSnapshot(
+            "ollama",
+            "Ollama",
+            UsageWindow.FromUsedPercent(sessionUsed.Value * 100, null, TimeSpan.FromHours(5)),
+            UsageWindow.FromUsedPercent(weeklyUsed.Value * 100, NextWeeklyReset(root), Week),
+            DateTimeOffset.UtcNow);
+    }
+
+    private static double? ReadUsageFraction(JsonElement limits, string windowKey)
+    {
+        if (!limits.TryGetProperty(windowKey, out var window)
+            || !window.TryGetProperty("usage", out var usage)
+            || usage.ValueKind != JsonValueKind.Number)
+        {
+            return null;
+        }
+
+        return usage.GetDouble();
+    }
+
+    private static DateTimeOffset? NextWeeklyReset(JsonElement root)
+    {
+        if (!root.TryGetProperty("activity", out var activity)
+            || !activity.TryGetProperty("period", out var period)
+            || !period.TryGetProperty("starting_at", out var startingAtProperty)
+            || startingAtProperty.GetString() is not { } startingAtText
+            || !DateTimeOffset.TryParse(
+                startingAtText,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal,
+                out var startingAt))
+        {
+            return null;
+        }
+
+        var elapsedWeeks = Math.Floor((DateTimeOffset.UtcNow - startingAt) / Week);
+        return startingAt + ((elapsedWeeks + 1) * Week);
     }
 
     internal static ProviderUsageSnapshot ParseUsageHtml(string html)
@@ -135,10 +244,23 @@ internal sealed partial class OllamaUsageClient
         return response.Headers.Location is { } location && IsSignInUri(location);
     }
 
-    private static bool IsSignInUri(Uri uri) =>
-        uri.Host.Equals("signin.ollama.com", StringComparison.OrdinalIgnoreCase)
-        || uri.AbsolutePath.Contains("signin", StringComparison.OrdinalIgnoreCase)
-        || uri.AbsolutePath.Contains("login", StringComparison.OrdinalIgnoreCase);
+    // A redirect's Location header is allowed to be relative (RFC 7231 does not
+    // require an authority), and ollama.com's own sign-in redirect is one - a bare
+    // "/signin?...". uri.Host throws InvalidOperationException on a relative Uri,
+    // which turned every session-expired redirect into an unhandled crash instead
+    // of the "sign in again" message this check exists to produce.
+    private static bool IsSignInUri(Uri uri)
+    {
+        if (!uri.IsAbsoluteUri)
+        {
+            return uri.OriginalString.Contains("signin", StringComparison.OrdinalIgnoreCase)
+                || uri.OriginalString.Contains("login", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return uri.Host.Equals("signin.ollama.com", StringComparison.OrdinalIgnoreCase)
+            || uri.AbsolutePath.Contains("signin", StringComparison.OrdinalIgnoreCase)
+            || uri.AbsolutePath.Contains("login", StringComparison.OrdinalIgnoreCase);
+    }
 
     [GeneratedRegex(@"(\d+(?:\.\d+)?)\s*%\s*used", RegexOptions.IgnoreCase)]
     private static partial Regex UsedPercentRegex();

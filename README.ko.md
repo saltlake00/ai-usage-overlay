@@ -12,13 +12,25 @@ Windows 11 작업 표시줄 위에서 Codex, Claude, Ollama Cloud의 남은 사�
 
 ## 인증
 
-Codex 인증은 기존 로컬 Codex 설정을 사용합니다. Claude는 Claude Code의 기존 로그인(`~/.claude/.credentials.json`)을 읽기 전용으로 사용하므로 별도 설정이 없습니다. Ollama Cloud만 사용자 환경 변수로 세션 쿠키를 받습니다.
+Codex 인증은 기존 로컬 Codex 설정을 사용합니다. Claude는 Claude Code의 기존 로그인(`~/.claude/.credentials.json`)을 읽기 전용으로 사용하므로 별도 설정이 없습니다. Ollama Cloud만 사용자 환경 변수가 필요합니다.
+
+**권장: API 키.** [ollama.com/settings/keys](https://ollama.com/settings/keys)에서 키를 만든 뒤:
+
+```powershell
+[Environment]::SetEnvironmentVariable('OLLAMA_API_KEY', 'Ollama API 키 값', 'User')
+```
+
+공식 `GET https://ollama.com/api/usage` 엔드포인트(`Authorization: Bearer` 인증)를 쓰므로 세션 쿠키처럼 요청마다 값이 바뀌지 않고, 로그인 세션이 만료돼도 영향받지 않습니다.
+
+**대체 경로: 세션 쿠키.** API 키를 설정할 수 없을 때만 씁니다 — 브라우저 DevTools에서 `__Secure-session` 쿠키 값을 **"Copy Value"**로 통째로 복사합니다(화면에 잘려 보이는 값을 손으로 긁으면 일부만 복사됩니다):
 
 ```powershell
 [Environment]::SetEnvironmentVariable('OLLAMA_SESSION_COOKIE', 'Ollama Cloud 세션 쿠키 값', 'User')
 ```
 
-세션 쿠키와 액세스 토큰은 비밀번호와 같은 비밀 정보입니다. 공유하거나 저장소에 커밋하지 마세요.
+이 값은 서버가 요청마다 새로 발급하는(rolling) 방식이라, 복사한 순간에는 유효해도 브라우저가 다음 요청을 보내는 사이 무효화될 수 있습니다. 두 값을 모두 설정하면 API 키가 우선 적용되고 쿠키는 무시됩니다.
+
+세션 쿠키와 API 키는 비밀번호와 같은 비밀 정보입니다. 공유하거나 저장소에 커밋하지 마세요.
 
 ## 저비용 설정
 

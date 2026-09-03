@@ -29,7 +29,7 @@ internal sealed class OllamaCredentialSource
         if (cookie is null && apiKey is null)
         {
             throw new OllamaUsageException(
-                "Ollama Cloud is not configured. Set OLLAMA_SESSION_COOKIE to show quota windows.");
+                "Ollama Cloud is not configured. Set OLLAMA_API_KEY (from ollama.com/settings/keys) to show quota windows.");
         }
 
         if (cookie is not null && !cookie.Contains('='))

@@ -83,14 +83,18 @@ internal sealed class MultiProviderCoordinator
             // Keep the provider's own message: the credential sources and clients
             // phrase these as the next action to take ("run `claude` to sign in"),
             // and they are written never to echo a token or cookie. Collapsing them
-            // into one generic string left every failure undiagnosable.
+            // into one generic string left every failure undiagnosable, but an
+            // unexpected exception's own .Message is not vetted the same way (a
+            // test guards exactly this - an HttpRequestException's message can
+            // carry the request URI or other request detail) so only the type
+            // name is safe to surface here.
             return new ProviderUsageState(
                 provider.Id,
                 ProviderAvailability.Failed,
                 previous.LastSuccessful,
                 exception is IActionableProviderError && !string.IsNullOrWhiteSpace(exception.Message)
                     ? exception.Message
-                    : "Usage unavailable");
+                    : $"Usage unavailable ({exception.GetType().Name})");
         }
     }
 }
