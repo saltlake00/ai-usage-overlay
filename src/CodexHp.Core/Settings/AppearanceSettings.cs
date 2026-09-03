@@ -1,4 +1,4 @@
-namespace CodexHp.Core.Settings;
+﻿namespace CodexHp.Core.Settings;
 
 public sealed record AppearanceSettings(
     int OverlayWidth,
